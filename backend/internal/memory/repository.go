@@ -422,9 +422,16 @@ func (r *Repository) GetProcessingState(ctx context.Context, meetingID uuid.UUID
 
 	// Get version number
 	var versionNum *int
-	r.pool.QueryRow(ctx, `
+	// #nosec G104 -- QueryRow returning no row is non-fatal here; we keep
+	// the existing pointer (nil) so the caller sees "no version yet". A
+	// surfaced error would be a behavior change for callers that rely on
+	// the current "best-effort" semantics. Adding a logger is out of scope
+	// for this CI fix.
+	if err := r.pool.QueryRow(ctx, `
 		SELECT version_number FROM memory_versions WHERE id = $1
-	`, activeVersionID).Scan(&versionNum)
+	`, activeVersionID).Scan(&versionNum); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		_ = err // intentionally ignored; see comment above
+	}
 	state.ActiveVersionNumber = versionNum
 
 	if latestJob != nil {

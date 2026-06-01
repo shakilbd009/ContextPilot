@@ -88,25 +88,25 @@ func getUserID(r *http.Request) (uuid.UUID, bool) {
 func forbidden(w http.ResponseWriter, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusForbidden)
-	w.Write([]byte(`{"type":"about:blank","title":"Forbidden","status":403,"detail":"` + detail + `"}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Forbidden","status":403,"detail":"` + detail + `"}`))
 }
 
 func notFound(w http.ResponseWriter, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte(`{"type":"about:blank","title":"Not Found","status":404,"detail":"` + detail + `"}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Not Found","status":404,"detail":"` + detail + `"}`))
 }
 
 func unauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusUnauthorized)
-	w.Write([]byte(`{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Authentication required."}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Authentication required."}`))
 }
 
 func internalError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusInternalServerError)
-	w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`))
 }
 
 // Handler returns a chi router with memory API routes.
@@ -263,7 +263,7 @@ func handleGetMemory(log *zerolog.Logger) http.HandlerFunc {
 		fmt.Printf("DEBUG GetMemory: responding with status=%s state=%s version=%p\n", resp.Status, resp.ProcessingState, version)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -305,7 +305,7 @@ func handleListMemoryVersions(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(MemoryVersionList{
+		_ = json.NewEncoder(w).Encode(MemoryVersionList{
 			MeetingID: meetingID,
 			Versions:  versions,
 		})
@@ -358,7 +358,7 @@ func handleGetMemoryVersion(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(version)
+		_ = json.NewEncoder(w).Encode(version)
 	}
 }
 
@@ -395,7 +395,7 @@ func handleReprocessMemory(log *zerolog.Logger) http.HandlerFunc {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(http.StatusBadRequest)
-				w.Write([]byte(`{"type":"about:blank","title":"Bad Request","status":400}`))
+				_, _ = w.Write([]byte(`{"type":"about:blank","title":"Bad Request","status":400}`))
 				return
 			}
 		}
@@ -414,7 +414,7 @@ func handleReprocessMemory(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(ReprocessAccepted{
+		_ = json.NewEncoder(w).Encode(ReprocessAccepted{
 			JobID:         jobID,
 			CorrelationID: correlationID,
 		})
@@ -460,7 +460,7 @@ func handleGetMemoryState(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(state)
+		_ = json.NewEncoder(w).Encode(state)
 	}
 }
 
@@ -524,7 +524,7 @@ func handleGetConflicts(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(ConflictList{
+		_ = json.NewEncoder(w).Encode(ConflictList{
 			MeetingID: meetingID,
 			Conflicts: summaries,
 		})
@@ -571,7 +571,7 @@ func handleResolveConflict(log *zerolog.Logger) http.HandlerFunc {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(http.StatusBadRequest)
-				w.Write([]byte(`{"type":"about:blank","title":"Bad Request","status":400}`))
+				_, _ = w.Write([]byte(`{"type":"about:blank","title":"Bad Request","status":400}`))
 				return
 			}
 		}
@@ -599,7 +599,7 @@ func handleResolveConflict(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"resolved"}`))
+		_, _ = w.Write([]byte(`{"status":"resolved"}`))
 	}
 }
 

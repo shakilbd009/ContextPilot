@@ -106,7 +106,7 @@ func NewRateLimiter(
 				log.Warn().Str("key", key).Str("path", r.URL.Path).Msg("rate limit exceeded")
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte(`{"type":"about:blank","title":"Too Many Requests","status":429,"detail":"Rate limit exceeded. Retry after the reset timestamp."}`))
+				_, _ = w.Write([]byte(`{"type":"about:blank","title":"Too Many Requests","status":429,"detail":"Rate limit exceeded. Retry after the reset timestamp."}`))
 				return
 			}
 

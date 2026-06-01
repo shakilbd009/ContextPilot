@@ -280,6 +280,7 @@ func (w *Worker) computeBackoff(retryCount int) time.Duration {
 		delay = float64(w.cfg.MaxBackoff)
 	}
 	// Apply jitter
+	// #nosec G404 -- math/rand is the correct PRNG for non-security jitter; not a secret
 	jitter := delay * w.cfg.JitterFraction * (2*rand.Float64() - 1)
 	delay = delay + jitter
 	if delay < 0 {

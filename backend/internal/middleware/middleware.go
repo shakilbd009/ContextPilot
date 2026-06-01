@@ -22,7 +22,7 @@ func Recover(log zerolog.Logger) func(http.Handler) http.Handler {
 						Msg("panic recovered")
 					w.Header().Set("Content-Type", "application/problem+json")
 					w.WriteHeader(http.StatusInternalServerError)
-					w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`))
+					_, _ = w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`))
 				}
 			}()
 			next.ServeHTTP(w, r)

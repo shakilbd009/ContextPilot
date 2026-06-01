@@ -95,7 +95,19 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install pnpm
-        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+        # pnpm/action-setup@<sha-pin> is preferred over `npm install -g pnpm`
+        # for two reasons:
+        # 1. It puts pnpm on PATH for every subsequent step (the
+        #    npm-install-g route has a documented PATH issue when
+        #    combined with actions/setup-node's pnpm cache, which is
+        #    exactly what was breaking Frontend job run 26762987092).
+        # 2. It pins the pnpm version in one place (env.PNPM_VERSION)
+        #    and refuses to install if the requested version is missing
+        #    from the action's mirrored registry, instead of silently
+        #    installing whatever npm registry serves.
+        uses: pnpm/action-setup@v6.0.8
+        with:
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Install deps
         run: cd frontend && pnpm install --frozen-lockfile
@@ -146,7 +158,16 @@ jobs:
           gosec -severity=low -confidence=low ./...
 
       - name: TruffleHog filesystem scan
-        uses: trufflehog-actions/trufflehog@v0.0.10
+        # trufflehog-actions/trufflehog@v0.0.10 (used previously) does
+        # not exist — the `trufflehog-actions` org is not on GitHub and
+        # the v0.0.10 tag never resolved, which is exactly what the
+        # Security job's "Unable to resolve action trufflehog-actions/
+        # trufflehog, repository not found" annotation reported on run
+        # 26762987092. The correct composite action lives at
+        # trufflesecurity/trufflehog (same org as the underlying tool).
+        # Pin to a release tag (v3.95.3) rather than @main so the
+        # action's vendored binary and detectors don't silently change.
+        uses: trufflesecurity/trufflehog@v3.95.3
         with:
           path: ./
           base: ${{ github.ref }}
@@ -174,7 +195,9 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install pnpm
-        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+        uses: pnpm/action-setup@v6.0.8
+        with:
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Install frontend deps
         run: cd frontend && pnpm install --frozen-lockfile

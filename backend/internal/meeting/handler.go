@@ -99,7 +99,7 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool, rateLimitMiddleware func(h
 					}
 					w.Header().Set("Content-Type", "application/problem+json")
 					w.WriteHeader(http.StatusForbidden)
-					w.Write([]byte(`{"type":"about:blank","title":"Forbidden","status":403,"detail":"Manual meeting import is not enabled. Set FF_ENABLE_MANUAL_MEETING_IMPORT=true to activate."}`))
+					_, _ = w.Write([]byte(`{"type":"about:blank","title":"Forbidden","status":403,"detail":"Manual meeting import is not enabled. Set FF_ENABLE_MANUAL_MEETING_IMPORT=true to activate."}`))
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -171,7 +171,7 @@ func handleCreateMeeting(log *zerolog.Logger) http.HandlerFunc {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{
 				Errors: validation.Errors,
 				Values: validation.Values,
 			})
@@ -205,7 +205,7 @@ func handleCreateMeeting(log *zerolog.Logger) http.HandlerFunc {
 			// Token already used — return 409
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(DuplicateErrorBody{
+			_ = json.NewEncoder(w).Encode(DuplicateErrorBody{
 				Error:          "duplicate",
 				MeetingID:      existingID.String(),
 				OriginalOutcome: originalOutcome,
@@ -222,7 +222,7 @@ func handleCreateMeeting(log *zerolog.Logger) http.HandlerFunc {
 			})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{
 				Errors: validation.Errors,
 				Values: validation.Values,
 			})
@@ -277,7 +277,7 @@ func handleCreateMeeting(log *zerolog.Logger) http.HandlerFunc {
 		// Return 201 with redirect
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(CreateMeetingOutput{
+		_ = json.NewEncoder(w).Encode(CreateMeetingOutput{
 			ID:       meetingID.String(),
 			Redirect: fmt.Sprintf("/meetings/%s", meetingID.String()),
 		})
@@ -328,7 +328,7 @@ func handleListMeetings(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"meetings": meetings})
+		_ = json.NewEncoder(w).Encode(map[string]any{"meetings": meetings})
 	}
 }
 
@@ -368,7 +368,7 @@ func handleGetMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(meeting)
+		_ = json.NewEncoder(w).Encode(meeting)
 	}
 }
 
@@ -430,7 +430,7 @@ func handleUpdateMeeting(log *zerolog.Logger) http.HandlerFunc {
 		if len(validationErrors) > 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{
 				Errors: validationErrors,
 				Values: map[string]any{
 					"title":        in.Title,
@@ -485,6 +485,6 @@ func handleUpdateMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(updated)
+		_ = json.NewEncoder(w).Encode(updated)
 	}
 }

@@ -124,7 +124,7 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
 
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
-					w.Write([]byte(`{"code":"feature_disabled","message":"Upcoming meetings are not enabled. Set FF_ENABLE_UPCOMING_MEETINGS=true to activate."}`))
+					_, _ = w.Write([]byte(`{"code":"feature_disabled","message":"Upcoming meetings are not enabled. Set FF_ENABLE_UPCOMING_MEETINGS=true to activate."}`))
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -187,7 +187,7 @@ func handleCreateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
 			return
 		}
 
@@ -209,7 +209,7 @@ func handleCreateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 			CreateFailedTotal.WithLabelValues("validation").Inc()
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
 			return
 		}
 
@@ -279,7 +279,7 @@ if err != nil {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(CreateUpcomingMeetingOutput{
+		_ = json.NewEncoder(w).Encode(CreateUpcomingMeetingOutput{
 			ID:       meetingID.String(),
 			Redirect: "/api/v1/upcoming/" + meetingID.String(),
 		})
@@ -346,7 +346,7 @@ func handleListUpcomingMeetings(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(meetings)
+		_ = json.NewEncoder(w).Encode(meetings)
 	}
 }
 
@@ -410,7 +410,7 @@ func handleGetUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(meeting)
+		_ = json.NewEncoder(w).Encode(meeting)
 	}
 }
 
@@ -464,7 +464,7 @@ func handleUpdateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"errors": []map[string]string{{
 					"field":   "_",
 					"message": "Edit window has expired. Meetings can only be edited within 15 minutes of their scheduled start time.",
@@ -498,7 +498,7 @@ func handleUpdateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
 			return
 		}
 
@@ -594,7 +594,7 @@ func handleUpdateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(UpdateSuccessBody{UpcomingMeeting: updated, MeaningfulEdit: meaningfulEdit})
+		_ = json.NewEncoder(w).Encode(UpdateSuccessBody{UpcomingMeeting: updated, MeaningfulEdit: meaningfulEdit})
 	}
 }
 
@@ -648,7 +648,7 @@ func handleCancelUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    "not_cancellable",
 				"message": "Cancellation is no longer available after the meeting window.",
 			})
@@ -689,7 +689,7 @@ func handleCancelUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 	}
 }
 

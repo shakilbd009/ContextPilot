@@ -32,6 +32,6 @@ func Ready(ctx context.Context) http.Handler {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Ready"))
+		_, _ = w.Write([]byte("Ready"))
 	})
 }
