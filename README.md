@@ -178,13 +178,13 @@ See `.github/workflows/eval.yml`. Key jobs (all blocking on push to `main` and a
 - **Sync Check** — Runs `scripts/check-status-sync.sh`.
 - **Backend** — `cd backend && go vet ./... && go test ./...`.
 - **Frontend** — installs pnpm with frozen lockfile, then runs `svelte-check`, `pnpm test`, and `pnpm build`. The `lint` step is a no-op (the project has no `lint` script in `package.json`); CI mirrors the local `make lint` SKIP behavior.
-- **Security** — installs `gosec` via `go install` and runs `gosec -severity=low -confidence=low ./...` against `backend/`. TruffleHog runs via the official `trufflehog-actions/trufflehog@v0.0.10` action. Both fail the build on findings.
+- **Security** — installs `gosec` via `go install` and runs `gosec -severity=low -confidence=low ./...` against `backend/`. TruffleHog runs via the official `trufflesecurity/trufflehog@v3.95.3` action (the previous `trufflehog-actions/trufflehog@v0.0.10` does not exist — the `trufflehog-actions` org is not on GitHub). Both fail the build on findings.
 - **E2E** — installs Node + pnpm + Playwright Chromium (with system deps), then `docker compose up -d` (or `docker-compose up -d` on legacy v1 hosts), waits for backend `/healthz` and frontend root, then `pnpm exec playwright test --reporter=list`.
 - **Summary** — collects all job results into a single table; exits non-zero if any core blocking job failed.
 
-> **Local dry-run equivalent:** `make ci-local` (or `make ci-local-skip-e2e` to skip the heavy E2E gate) runs every blocking gate in the same order as CI. `make ci-e2e` and `make ci-security` are split out for when you only need one. Underlying scripts live in `scripts/ci-local-dry-run.sh`, `scripts/ci-e2e.sh`, `scripts/ci-security.sh`.
+> **Local dry-run equivalent:** `make ci-local` (or `make ci-local-skip-e2e` to skip the heavy E2E gate) runs every blocking gate that does **not** require extra installs or running services — i.e. architecture, sync-check, backend (`go vet` + `go test`), and frontend (install + svelte-check + test + build). The Security and E2E jobs are intentionally split out (see `make ci-security` / `make ci-e2e`) because they need gosec or docker-compose, and bundling them into `ci-local` would slow the common path past two minutes. Underlying scripts live in `scripts/ci-local-dry-run.sh`, `scripts/ci-e2e.sh`, `scripts/ci-security.sh`.
 
-> **Note:** the workflow exists and is enforceable, but as of 2026-06-01 there is **no GitHub remote** — CI cannot run end-to-end until Shakil creates/connects a repo and pushes. The local dry-run is the only path to verify CI parity right now. See STATUS.md → "Recovery state".
+> **Remote / PR state:** the GitHub remote is `git@github.com:shakilbd009/ContextPilot.git` and the current branch (`ops/restore-ci-baseline`) tracks `origin/ops/restore-ci-baseline`. Per `AGENTS.md` Operating Rule 6, the source-of-truth workflow is branch + PR — no direct pushes to `main`. CI parity is verified via `make ci-local-skip-e2e` (and `make ci-security`, `make ci-e2e` on demand) until the recovery PR merges. See STATUS.md → "Recovery state".
 
 ---
 
