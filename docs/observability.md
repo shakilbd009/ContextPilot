@@ -1,6 +1,8 @@
 # Observability
 
-> Phase 0 · v1.0.0 · Structured logs, metrics, traces, and error handling expectations
+> Version 2.0.0 · Structured logs, metrics, traces, and error handling expectations
+
+> **Current state (2026-06-01):** this document is the policy baseline. Implementation status is tracked separately — see [STATUS.md](../STATUS.md) → "Recovery state". No feature is "Production-Ready" yet. The contract below ("All three are required before a feature can be marked `Active`") is not yet satisfied for any feature; it is the bar to clear before flipping a flag to Active.
 
 ---
 

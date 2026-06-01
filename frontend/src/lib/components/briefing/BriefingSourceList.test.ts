@@ -21,7 +21,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: mockSources,
       onExclude: vi.fn(),
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     expect(screen.getByText('Source meetings')).toBeInTheDocument();
   });
@@ -30,7 +30,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: mockSources,
       onExclude: vi.fn(),
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     expect(screen.getAllByRole('button').length).toBeGreaterThanOrEqual(2);
   });
@@ -39,7 +39,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: [mockSources[0]],
       onExclude: vi.fn(),
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     expect(screen.getByText('Strong')).toBeInTheDocument();
   });
@@ -48,7 +48,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: [mockSources[1]],
       onExclude: vi.fn(),
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     expect(screen.getByText('Weak')).toBeInTheDocument();
   });
@@ -57,7 +57,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: mockSources,
       onExclude: vi.fn(),
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     expect(screen.getAllByText('Exclude').length).toBe(2);
   });
@@ -76,7 +76,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: [mockSources[0]],
       onExclude,
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     const excludeBtn = screen.getByText('Exclude');
     await excludeBtn.click();
@@ -87,7 +87,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: [],
       onExclude: vi.fn(),
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     expect(screen.getByText('No source meetings selected.')).toBeInTheDocument();
   });
@@ -96,7 +96,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: [mockSources[0]],
       onExclude: vi.fn(),
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     const toggle = screen.getAllByRole('button')[0];
     await toggle.click();
@@ -107,7 +107,7 @@ describe('BriefingSourceList', () => {
     render(BriefingSourceList, {
       sources: [mockSources[0]],
       onExclude: vi.fn(),
-      excludedSourceIds: new Set(),
+      excludedSourceIds: new Set<string>(),
     });
     const toggle = screen.getAllByRole('button')[0];
     await toggle.click();

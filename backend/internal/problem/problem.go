@@ -18,7 +18,7 @@ type Problem struct {
 func (p Problem) JSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(p.Status)
-	json.NewEncoder(w).Encode(p)
+	_ = json.NewEncoder(w).Encode(p)
 }
 
 // NotFound returns a 404 problem.

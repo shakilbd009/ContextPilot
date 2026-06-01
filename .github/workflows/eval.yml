@@ -8,10 +8,16 @@ on:
 env:
   # Pin package manager version
   PNPM_VERSION: "10.32.1"
+  # Backend listens on APP_PORT (default 8080). docker-compose.yml maps
+  # ${APP_PORT:-3000}:3000 — CI sets APP_PORT=3000 to match the container.
+  APP_PORT: "3000"
+  FRONTEND_PORT: "5174"
+  DATABASE_PORT: "5432"
+  CACHE_PORT: "6379"
 
 jobs:
   # ─────────────────────────────────────────────────────────
-  # Architecture Checks
+  # Architecture Checks (mirrors: make eval-arch)
   # ─────────────────────────────────────────────────────────
   architecture:
     name: Architecture Rules
@@ -34,7 +40,7 @@ jobs:
           done
 
   # ─────────────────────────────────────────────────────────
-  # Sync Check
+  # Sync Check (mirrors: make sync-check)
   # ─────────────────────────────────────────────────────────
   sync-check:
     name: Status Sync Check
@@ -48,12 +54,11 @@ jobs:
           bash scripts/check-status-sync.sh
 
   # ─────────────────────────────────────────────────────────
-  # Backend (requires Phase 1)
+  # Backend (mirrors: make eval-backend = go vet + go test)
   # ─────────────────────────────────────────────────────────
   backend:
     name: Backend
     runs-on: ubuntu-latest
-    if: false  # Skip until Phase 1 backend exists
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -66,37 +71,40 @@ jobs:
       - name: Go vet
         run: cd backend && go vet ./...
 
-      - name: Go lint
-        run: |
-          if command -v golangci-lint &>/dev/null; then
-            cd backend && golangci-lint run ./...
-          else
-            echo "golangci-lint not installed — skipping"
-          fi
-
       - name: Go test
         run: cd backend && go test ./...
 
   # ─────────────────────────────────────────────────────────
-  # Frontend (requires Phase 1)
+  # Frontend (mirrors: make eval-frontend + pnpm test)
+  # Note: pnpm lint is intentionally NOT a step — the project has
+  # no `lint` script in package.json. Local `make lint` echoes a
+  # SKIP line if no script exists; CI must do the same.
   # ─────────────────────────────────────────────────────────
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
-    if: false  # Skip until Phase 1 frontend exists
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Node
+        # Cache is intentionally NOT enabled here. The
+        # actions/setup-node@v4 pnpm cache code path (cache: 'pnpm' +
+        # cache-dependency-path) is the failure surface — both
+        # Frontend job runs 26762987092 and 26765953548 failed at this
+        # step with it enabled, even when the lockfile path was valid.
+        # pnpm/action-setup below provides the binary; for the store
+        # cache, add an explicit actions/cache keyed on
+        # frontend/pnpm-lock.yaml at a later date if cold-cache time
+        # becomes a problem.
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install pnpm
-        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+        uses: pnpm/action-setup@v6.0.8
+        with:
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Install deps
         run: cd frontend && pnpm install --frozen-lockfile
@@ -104,14 +112,24 @@ jobs:
       - name: Type check
         run: cd frontend && pnpm exec svelte-check --tsconfig ./tsconfig.json
 
-      - name: Lint
-        run: cd frontend && pnpm lint
+      - name: Lint (no-op if script missing)
+        run: |
+          cd frontend
+          if pnpm run | grep -qE '^[[:space:]]+lint'; then
+            pnpm lint
+          else
+            echo "SKIP: no 'lint' script in frontend/package.json"
+          fi
+
+      - name: Unit tests
+        run: cd frontend && pnpm test
 
       - name: Build
         run: cd frontend && pnpm build
 
   # ─────────────────────────────────────────────────────────
-  # Security
+  # Security (BLOCKING — installs tools, fails on findings)
+  # Mirrors: make eval-security, but blocking.
   # ─────────────────────────────────────────────────────────
   security:
     name: Security
@@ -120,43 +138,131 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Go security scan
-        if: false  # Enable when backend exists
-        run: |
-          which gosec &>/dev/null && cd backend && gosec ./... || echo "gosec not installed — skipping"
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
 
-      - name: Check for secrets
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec (Go security scan)
+        # gosec exits 1 when issues are found at default severity.
+        # Use -severity=low so CI is more strict; -confidence=low for same reason.
+        # Allow override via GOSEC_OPTS env if a project needs to relax.
         run: |
-          if command -v trufflehog &>/dev/null; then
-            trufflehog filesystem .
-          else
-            echo "trufflehog not installed — skipping"
-          fi
+          cd backend
+          gosec -severity=low -confidence=low ./...
+
+      - name: TruffleHog filesystem scan
+        # trufflehog-actions/trufflehog@v0.0.10 (used previously) does
+        # not exist — the `trufflehog-actions` org is not on GitHub and
+        # the v0.0.10 tag never resolved, which is exactly what the
+        # Security job's "Unable to resolve action trufflehog-actions/
+        # trufflehog, repository not found" annotation reported on run
+        # 26762987092. The correct composite action lives at
+        # trufflesecurity/trufflehog (same org as the underlying tool).
+        # Pin to a release tag (v3.95.3) rather than @main so the
+        # action's vendored binary and detectors don't silently change.
+        uses: trufflesecurity/trufflehog@v3.95.3
+        with:
+          path: ./
+          base: ${{ github.ref }}
+          head: HEAD
+          # No extra args → uses defaults; the action fails the step on findings.
 
   # ─────────────────────────────────────────────────────────
-  # E2E Tests (requires Phase 1 + services up)
+  # E2E Tests (BLOCKING — installs deps + browsers, waits for
+  # services, then runs Playwright). Mirrors: make eval-e2e
+  # but blocking and with full setup.
   # ─────────────────────────────────────────────────────────
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    if: false  # Skip until Phase 1+ full stack running
     needs: [backend, frontend]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Start services
-        run: docker compose up -d
+      - name: Set up Node
+        # See Frontend job for the rationale on not using setup-node's
+        # built-in pnpm cache.
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-      - name: Wait for services
-        run: sleep 10 && make doctor || true
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.0.8
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install frontend deps
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+
+      - name: Install Playwright browsers
+        run: cd frontend && pnpm exec playwright install --with-deps chromium
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start services
+        # This project uses docker-compose v1 explicitly. The Makefile and
+        # scripts/doctor.sh are wired for v1; CI follows suit and falls
+        # back to v2 if v1 is unavailable.
+        run: |
+          set -e
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose up -d
+          else
+            docker compose up -d
+          fi
+
+      - name: Wait for backend health
+        run: |
+          echo "Waiting for backend on port ${{ env.APP_PORT }} ..."
+          for i in $(seq 1 60); do
+            if curl -fsS "http://localhost:${{ env.APP_PORT }}/healthz" >/dev/null 2>&1; then
+              echo "Backend healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Backend did not become healthy in 60s"
+          docker compose ps || docker-compose ps
+          exit 1
+
+      - name: Wait for frontend ready
+        run: |
+          echo "Waiting for frontend on port ${{ env.FRONTEND_PORT }} ..."
+          for i in $(seq 1 60); do
+            # Vite/SvelteKit dev server returns 200 with HTML for root path.
+            if curl -fsS -o /dev/null "http://localhost:${{ env.FRONTEND_PORT }}/"; then
+              echo "Frontend ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Frontend did not become ready in 60s"
+          docker compose ps || docker-compose ps
+          exit 1
 
       - name: Run E2E evals
+        # E2E contracts live in evals/e2e/*.md. The contracts are checked
+        # into the repo as documentation; the executable coverage is
+        # `pnpm exec playwright test` against frontend/tests/e2e/*.spec.ts.
         run: |
           for f in evals/e2e/*.md; do
-            echo "=== E2E: $f ==="
-            # Run playwright tests for each eval
+            [ -f "$f" ] || continue
+            echo "=== E2E contract: $f ==="
           done
+          cd frontend && pnpm exec playwright test --reporter=list
 
   # ─────────────────────────────────────────────────────────
   # Summary
@@ -181,8 +287,11 @@ jobs:
           echo "| E2E Tests | ${{ needs.e2e.result }} |"
           echo ""
           if [[ "${{ needs.architecture.result }}" == "success" ]] && \
-             [[ "${{ needs.sync-check.result }}" == "success" ]]; then
-            echo "✅ Core checks passed — ready for PR review"
+             [[ "${{ needs.sync-check.result }}" == "success" ]] && \
+             [[ "${{ needs.backend.result }}" == "success" ]] && \
+             [[ "${{ needs.frontend.result }}" == "success" ]]; then
+            echo "✅ Core blocking checks passed — ready for PR review"
           else
-            echo "❌ Core checks failed — address before merge"
+            echo "❌ Core blocking checks failed — address before merge"
+            exit 1
           fi

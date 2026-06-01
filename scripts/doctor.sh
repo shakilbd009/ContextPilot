@@ -53,7 +53,7 @@ if command -v docker &>/dev/null; then
     add_ok "docker compose $DC_VERSION"
   elif docker-compose --version &>/dev/null 2>&1; then
     DC_VERSION=$(docker-compose --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-    add_warning "docker-compose (legacy) $DC_VERSION — consider upgrading to 'docker compose'"
+    add_warning "docker-compose (legacy) $DC_VERSION — consider installing 'docker compose' plugin"
   else
     add_error "docker compose not found"
   fi

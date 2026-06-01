@@ -118,4 +118,4 @@ The escape hatch comment must be on the line immediately above the violation, or
 
 ## CI Integration
 
-See `.github/workflows/eval.yml`. Architecture and sync-check jobs run on every push. E2E and integration jobs are gated with `if: false` until Phase 1 services exist.
+See `.github/workflows/eval.yml`. Architecture, sync-check, backend, frontend, security, and e2e jobs all run on every push to `main` and any `**/brd-**` branch. None are gated with `if: false` as of 2026-06-01; the recovery ops task `t_f6efb43c` removed the last `if: false` and made security + e2e genuinely blocking. Local dry-run equivalent: `make ci-local` (or `scripts/ci-local-dry-run.sh --skip-e2e` to skip the heavy gate).

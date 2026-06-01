@@ -1,6 +1,13 @@
 # ContextPilot — Agent Operating Rules
 
-> Version 1.0.0 · Phase 0 Governance
+> Version 2.0.0 · Phase 0 closed · Phase 1 + 2 in recovery
+
+> **Read this first:** every feature in this project is tracked with three states. Do not collapse them.
+> - **Implemented** — source code exists in the working tree
+> - **Gates Green** — committed code passes `go test ./...`, `go vet ./...`, `make eval-arch`, `make sync-check`, and the corresponding CI job on the committed ref
+> - **Production-Ready** — `done-auditor` returned Trustworthy / Mostly trustworthy with no P0/P1 blockers for the relevant feature
+>
+> As of 2026-06-01, Phase 0 is Gates Green on commit (`89f250f`); Phases 1 and 2 are Implemented in the working tree but **not** Gates Green on a commit. See [STATUS.md](./STATUS.md) → "Recovery state" before claiming a feature is "done".
 
 ---
 
@@ -32,7 +39,7 @@ Three mandatory architecture fitness functions:
 2. `evals/architecture/check-no-panic.sh` — no `panic()` in production code
 3. `evals/architecture/check-no-background-context.sh` — no `context.Background()` in production code
 
-All three must exit 0 when source folders are empty (Phase 0 safe).
+All three must exit 0 when source folders are empty (Phase 0 backward-compatibility) and must exit 0 against the current source on every push.
 
 ### Feature Flags
 
@@ -67,7 +74,7 @@ Every feature is gated behind an `ff_*` flag:
 
 1. **Read before writing.** Load `project-scaffold` skill before Phase 0. Load relevant BRD before implementing a feature.
 2. **Verify everything.** Package versions, CLI commands, API conventions — confirm they exist before using them. Never guess.
-3. **No source code in Phase 0.** Backend/ and frontend/ stay empty. Governance, specs, contracts, evals, scripts, CI, and docs only.
+3. **Source code in Phase 0 is governance-only.** Backend/ and frontend/ stayed empty in Phase 0. Phase 1+ ships real code; do not use "Phase 0" as a reason to skip tests, CI, or security baseline.
 4. **No placeholder metadata.** STATUS.md, feature-flags.md, and env vars must have real paths, real flag names, real defaults.
 5. **Sync check must pass before commit.** Run `scripts/check-status-sync.sh` locally; CI runs it on every push.
 6. **PR workflow only.** No direct pushes to `main`. Branch names include BRD ID (`brd-01/app-shell`). PR summaries include eval evidence, screenshots for UI, flag status, migration/security/observability notes, and rollback plan.
@@ -94,7 +101,7 @@ Every feature is gated behind an `ff_*` flag:
 - No `version` key in `docker-compose.yml`
 - Healthchecks on every active service
 - Named volumes for persistence
-- Phase 0: active services must not reference non-existent frontend/backend build contexts
+- **This runtime uses `docker-compose` v1, not `docker compose` v2.** `docker: 'compose': unknown command` means v2 is missing; use `docker-compose` v1. The Makefile and `scripts/doctor.sh` are wired for v1; do not switch to v2 commands without verifying the environment has it.
 - Phase 1 frontend: anonymous volume for `node_modules/` so host bind mounts don't clobber container deps
 
 ### Feature Flag Dual Namespace
@@ -135,8 +142,8 @@ Both namespaces must stay in sync. The `.env.example` and `.env` files carry bot
 ├── .github/
 │   └── workflows/
 │       └── eval.yml               # CI pipeline
-├── backend/                       # Empty in Phase 0 (Go module in Phase 1)
-├── frontend/                      # Empty in Phase 0 (SvelteKit scaffold in Phase 1)
+├── backend/                     # Go/Echo REST API — Phase 1+
+├── frontend/                    # SvelteKit app — Phase 1+
 ├── contracts/
 │   ├── openapi.yaml               # Metadata + common schemas only (no invented endpoints)
 │   └── events.md                  # Async/event contract placeholder
@@ -175,15 +182,15 @@ Both namespaces must stay in sync. The `.env.example` and `.env` files carry bot
 ```bash
 # Verify governance
 make sync-check       # runs check-status-sync.sh, must exit 0
-make eval-arch       # runs all architecture evals (skip in Phase 0 if no source)
+make eval-arch        # runs all architecture evals; must exit 0 against current source
 
 # Local dev
-make dev             # docker compose up + service URLs
-make doctor          # check Docker, CLIs, package manager, ports
+make dev              # docker-compose up + service URLs
+make doctor           # check Docker, CLIs, package manager, ports
 
-# Phase 0 infra only
-docker compose up -d
-docker compose config  # must pass
+# Run the full blocking gate locally (what CI runs on push)
+make eval             # blocking: arch + backend + frontend; exits non-zero on any failure
+make eval-report      # non-blocking diagnostics: e2e, integration, security, perf
 
 # Feature flag demo
 FF_ENABLE_APP_SHELL=true make dev   # enable app shell locally
@@ -197,7 +204,9 @@ FF_ENABLE_APP_SHELL=true make dev   # enable app shell locally
 |----|----------|--------|
 | D-001 | Stack selection: Go + SvelteKit | Decided |
 | D-002 | Package manager: pnpm | Decided |
-| D-003 | Phase 0 scope: governance only | Decided |
+| D-003 | Phase 0 scope: governance only | Decided, superseded by D-009 |
 | D-004 | First BRD: App Shell (UI-first) | Decided |
+| D-008 | Backend code review gate | Decided |
+| D-009 | Recovery sprint (2026-05-31 → 2026-06-01) | In progress |
 
 Full decisions in `STATUS.md` → Decision Log section.

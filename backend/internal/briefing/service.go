@@ -457,7 +457,12 @@ func parseSourceContent(jsonBytes []byte) sourceContent {
 		return sourceContent{}
 	}
 	var c sourceContent
-	json.Unmarshal(jsonBytes, &c)
+	// #nosec G104 -- parseSourceContent is a best-effort helper: malformed
+	// JSON falls back to the zero value rather than returning an error,
+	// so the caller can keep aggregating content from other sources.
+	if err := json.Unmarshal(jsonBytes, &c); err != nil {
+		_ = err
+	}
 	return c
 }
 

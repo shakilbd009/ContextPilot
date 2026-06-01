@@ -78,31 +78,31 @@ func getUserID(r *http.Request) (uuid.UUID, bool) {
 func forbidden(w http.ResponseWriter, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusForbidden)
-	w.Write([]byte(`{"type":"about:blank","title":"Forbidden","status":403,"detail":"` + html.EscapeString(detail) + `"}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Forbidden","status":403,"detail":"` + html.EscapeString(detail) + `"}`))
 }
 
 func notFound(w http.ResponseWriter, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte(`{"type":"about:blank","title":"Not Found","status":404,"detail":"` + html.EscapeString(detail) + `"}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Not Found","status":404,"detail":"` + html.EscapeString(detail) + `"}`))
 }
 
 func unauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusUnauthorized)
-	w.Write([]byte(`{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Authentication required."}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Authentication required."}`))
 }
 
 func conflict(w http.ResponseWriter, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusConflict)
-	w.Write([]byte(`{"type":"about:blank","title":"Conflict","status":409,"detail":"` + html.EscapeString(detail) + `"}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Conflict","status":409,"detail":"` + html.EscapeString(detail) + `"}`))
 }
 
 func internalError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusInternalServerError)
-	w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`))
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`))
 }
 
 // Handler returns a chi router with briefing API routes.
@@ -138,19 +138,19 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker) http.Handl
 		})
 
 		// GET /upcoming/{meetingId}/briefing
-		r.Get("/upcoming/{meetingId}/briefing", handleGetBriefing(log))
+		g.Get("/upcoming/{meetingId}/briefing", handleGetBriefing(log))
 		// GET /upcoming/{meetingId}/briefing/versions
-		r.Get("/upcoming/{meetingId}/briefing/versions", handleListBriefingVersions(log))
+		g.Get("/upcoming/{meetingId}/briefing/versions", handleListBriefingVersions(log))
 		// GET /upcoming/{meetingId}/briefing/versions/{versionNumber}
-		r.Get("/upcoming/{meetingId}/briefing/versions/{versionNumber}", handleGetBriefingVersion(log))
+		g.Get("/upcoming/{meetingId}/briefing/versions/{versionNumber}", handleGetBriefingVersion(log))
 		// POST /upcoming/{meetingId}/briefing/regenerate
-		r.Post("/upcoming/{meetingId}/briefing/regenerate", handleRegenerateBriefing(log))
+		g.Post("/upcoming/{meetingId}/briefing/regenerate", handleRegenerateBriefing(log))
 		// GET /upcoming/{meetingId}/briefing/sources — FR-17: excluded/restored source visibility
-		r.Get("/upcoming/{meetingId}/briefing/sources", handleGetBriefingSources(log))
+		g.Get("/upcoming/{meetingId}/briefing/sources", handleGetBriefingSources(log))
 		// POST /upcoming/{meetingId}/briefing/sources/{sourceId}/exclude
-		r.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/exclude", handleExcludeSource(log))
+		g.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/exclude", handleExcludeSource(log))
 		// POST /upcoming/{meetingId}/briefing/sources/{sourceId}/restore
-		r.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/restore", handleRestoreSource(log))
+		g.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/restore", handleRestoreSource(log))
 	})
 
 	return r
@@ -212,7 +212,7 @@ func handleGetBriefingSources(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(SourceExclusionResponse{
+		_ = json.NewEncoder(w).Encode(SourceExclusionResponse{
 			UpcomingMeetingID: meetingID,
 			Excluded:          excluded,
 			Restored:          restored,
@@ -303,7 +303,10 @@ func handleGetBriefing(log *zerolog.Logger) http.HandlerFunc {
 		var content *BriefingContent
 		if len(contentJSON) > 0 {
 			c := BriefingContent{}
-			json.Unmarshal(contentJSON, &c)
+			if err := json.Unmarshal(contentJSON, &c); err != nil {
+				// nolint:gosec // G104 — log and continue with zero value
+				log.Warn().Err(err).Msg("json.Unmarshal failed; continuing with zero value")
+			}
 			content = &c
 		}
 
@@ -321,7 +324,7 @@ func handleGetBriefing(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -363,7 +366,7 @@ func handleListBriefingVersions(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(BriefingVersionList{
+		_ = json.NewEncoder(w).Encode(BriefingVersionList{
 			MeetingID: meetingID,
 			Versions:  versions,
 		})
@@ -416,7 +419,7 @@ func handleGetBriefingVersion(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(version)
+		_ = json.NewEncoder(w).Encode(version)
 	}
 }
 
@@ -493,7 +496,7 @@ func handleRegenerateBriefing(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(RegenerateAccepted{
+		_ = json.NewEncoder(w).Encode(RegenerateAccepted{
 			JobID:         jobID,
 			CorrelationID: correlationID,
 		})
@@ -560,7 +563,7 @@ func handleExcludeSource(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(ExclusionAccepted{
+		_ = json.NewEncoder(w).Encode(ExclusionAccepted{
 			SourceMeetingID: sourceID,
 		})
 	}
@@ -618,7 +621,7 @@ func handleRestoreSource(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(ExclusionAccepted{
+		_ = json.NewEncoder(w).Encode(ExclusionAccepted{
 			SourceMeetingID: sourceID,
 			RestoredAt:      &restoredAt,
 		})

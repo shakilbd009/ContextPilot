@@ -22,7 +22,7 @@ import (
 const featureFlagEnv = "FF_ENABLE_UPCOMING_MEETINGS"
 
 type contextKey struct{}
-type poolKey struct{}
+type poolKey     struct{}
 
 // WithRepository injects the upcoming repository into the request context.
 func WithRepository(pool *pgxpool.Pool) func(http.Handler) http.Handler {
@@ -73,11 +73,20 @@ func getUserID(r *http.Request) (uuid.UUID, bool) {
 	return id, true
 }
 
-func isFeatureFlagEnabled() bool {
+func isFeatureFlagEnabled(ctx context.Context) bool {
+	if testFFValue != "" {
+		part := strings.SplitN(testFFValue, ",", 2)[0]
+		return strings.ToLower(part) == "true"
+	}
 	v := strings.TrimSpace(os.Getenv(featureFlagEnv))
 	part := strings.SplitN(v, ",", 2)[0]
 	return strings.ToLower(part) == "true"
 }
+
+// testFFValue is a package-level override for testing only.
+// It is set by buildTestRouter and read by isFeatureFlagEnabled
+// to bypass the deferred os.Setenv restore timing issue.
+var testFFValue string
 
 // hashID returns the first 16 hex chars of SHA-256 of the stringified UUID.
 // Used for privacy-safe log correlation (FR-20).
@@ -100,7 +109,7 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
 	r.Group(func(g chi.Router) {
 		g.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !isFeatureFlagEnabled() {
+				if !isFeatureFlagEnabled(r.Context()) {
 					// Emit flag mismatch metric: frontend is attempting to use the feature
 					// while the backend flag is disabled.
 					FlagMismatchTotal.WithLabelValues("upcoming_meetings", "frontend-disabled", "feature_disabled").Inc()
@@ -115,18 +124,18 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
 
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
-					w.Write([]byte(`{"code":"feature_disabled","message":"Upcoming meetings are not enabled. Set FF_ENABLE_UPCOMING_MEETINGS=true to activate."}`))
+					_, _ = w.Write([]byte(`{"code":"feature_disabled","message":"Upcoming meetings are not enabled. Set FF_ENABLE_UPCOMING_MEETINGS=true to activate."}`))
 					return
 				}
 				next.ServeHTTP(w, r)
 			})
 		})
 
-		r.Post("/", handleCreateUpcomingMeeting(log))
-		r.Get("/", handleListUpcomingMeetings(log))
-		r.Get("/{id}", handleGetUpcomingMeeting(log))
-		r.Patch("/{id}", handleUpdateUpcomingMeeting(log))
-		r.Post("/{id}/cancel", handleCancelUpcomingMeeting(log))
+		g.Post("/", handleCreateUpcomingMeeting(log))
+		g.Get("/", handleListUpcomingMeetings(log))
+		g.Get("/{id}", handleGetUpcomingMeeting(log))
+		g.Patch("/{id}", handleUpdateUpcomingMeeting(log))
+		g.Post("/{id}/cancel", handleCancelUpcomingMeeting(log))
 	})
 
 	return r
@@ -160,7 +169,7 @@ func handleCreateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 		hasParticipants := len(in.Participants) > 0
 		CreateRequestedTotal.WithLabelValues(source, strconv.FormatBool(hasParticipants)).Inc()
 
-		validation := ValidateCreate(in)
+		validation := ValidateCreate(in, time.Now())
 		if validation.HasErrors() {
 			for _, fe := range validation.Errors {
 				ValidationFailedTotal.WithLabelValues(fe.Code).Inc()
@@ -178,7 +187,7 @@ func handleCreateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
 			return
 		}
 
@@ -200,7 +209,7 @@ func handleCreateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 			CreateFailedTotal.WithLabelValues("validation").Inc()
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
 			return
 		}
 
@@ -270,7 +279,7 @@ if err != nil {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(CreateUpcomingMeetingOutput{
+		_ = json.NewEncoder(w).Encode(CreateUpcomingMeetingOutput{
 			ID:       meetingID.String(),
 			Redirect: "/api/v1/upcoming/" + meetingID.String(),
 		})
@@ -337,7 +346,7 @@ func handleListUpcomingMeetings(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(meetings)
+		_ = json.NewEncoder(w).Encode(meetings)
 	}
 }
 
@@ -401,7 +410,7 @@ func handleGetUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(meeting)
+		_ = json.NewEncoder(w).Encode(meeting)
 	}
 }
 
@@ -455,7 +464,7 @@ func handleUpdateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"errors": []map[string]string{{
 					"field":   "_",
 					"message": "Edit window has expired. Meetings can only be edited within 15 minutes of their scheduled start time.",
@@ -489,7 +498,7 @@ func handleUpdateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
+			_ = json.NewEncoder(w).Encode(ValidationErrorBody{Errors: validation.Errors, Values: validation.Values})
 			return
 		}
 
@@ -585,7 +594,7 @@ func handleUpdateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(UpdateSuccessBody{UpcomingMeeting: updated, MeaningfulEdit: meaningfulEdit})
+		_ = json.NewEncoder(w).Encode(UpdateSuccessBody{UpcomingMeeting: updated, MeaningfulEdit: meaningfulEdit})
 	}
 }
 
@@ -639,7 +648,7 @@ func handleCancelUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    "not_cancellable",
 				"message": "Cancellation is no longer available after the meeting window.",
 			})
@@ -680,7 +689,7 @@ func handleCancelUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 	}
 }
 

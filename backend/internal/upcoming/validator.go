@@ -17,8 +17,11 @@ func (v ValidationResult) HasErrors() bool {
 	return len(v.Errors) > 0
 }
 
-// ValidateCreate validates a POST /upcoming request body.
-func ValidateCreate(in CreateUpcomingMeetingInput) ValidationResult {
+// ValidateCreate validates a POST /upcoming request body. The caller passes
+// the reference "now" so that the 15-minute scheduling floor is deterministic
+// and testable (boundary checks at exactly T+15min do not depend on the gap
+// between two time.Now() calls in the test and the validator).
+func ValidateCreate(in CreateUpcomingMeetingInput, now time.Time) ValidationResult {
 	result := ValidationResult{
 		Values: echoValues(in),
 	}
@@ -49,8 +52,10 @@ func ValidateCreate(in CreateUpcomingMeetingInput) ValidationResult {
 				Code:    "invalid_scheduled_start",
 			})
 		} else {
-			// 15-minute floor: scheduled_start must be >= now + 15 minutes
-			floor := time.Now().Add(15 * time.Minute)
+			// 15-minute floor: scheduled_start must be >= now + 15 minutes.
+			// `now` is provided by the caller so tests can pin the reference
+			// instant and avoid time-of-day drift between the two reads.
+			floor := now.Add(15 * time.Minute)
 			if scheduled.Before(floor) {
 				result.Errors = append(result.Errors, FieldError{
 					Field:   "scheduledStart",

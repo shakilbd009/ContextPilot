@@ -22,7 +22,7 @@
   const briefingEnabled = import.meta.env.VITE_FF_ENABLE_PRE_CALL_BRIEFING === 'true';
   const flagMismatch = $derived(data.serverPreCallBriefingEnabled !== briefingEnabled);
 
-  const meetingId = $derived($page.params.id);
+  const meetingId = $derived($page.params.id ?? '');
 
   let briefing = $state<BriefingActive | null>(null);
   let versions = $state<BriefingVersionSummary[]>([]);

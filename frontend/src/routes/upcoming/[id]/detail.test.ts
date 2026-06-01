@@ -33,7 +33,7 @@ vi.mock('$app/navigation', () => ({
   goto: vi.fn(),
 }));
 
-// ── Mock $app/stores (page) ──────────────────────────────────────
+// ── Mock $app/stores (page) — hoisted sync store factory ─
 const { pageStore } = vi.hoisted(() => {
   const { writable } = require('svelte/store');
   return { pageStore: writable({ params: { id: 'test-id-123' } }) };

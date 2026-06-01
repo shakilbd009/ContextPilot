@@ -37,25 +37,20 @@ afterEach(() => {
 
 // ── Import after mocks ───────────────────────────────────────────
 import MeetingsPage from './+page.svelte';
+import type { PageData } from './$types';
 
-function makeData(overrides: Partial<{
-  meetings: Array<{ id: string; title: string; completedAt: string; participants: Array<{ displayName: string }> }>;
-  total: number;
-  page: number;
-  limit: number;
-  hasMore: boolean;
-  error: string | null;
-}> = {}) {
+function makeData(overrides: Partial<PageData> = {}): PageData {
   return {
+    ffEnableAppShell: true,
     meetings: [],
     total: 0,
     page: 1,
     limit: 20,
     hasMore: false,
-    error: null,
     loading: false,
+    error: null,
     ...overrides,
-  };
+  } as PageData;
 }
 
 function renderPage(data = makeData()) {
@@ -165,7 +160,7 @@ describe('MeetingsPage — error state', () => {
   it('hides meeting list when error is present', () => {
     renderPage(makeData({
       error: 'Network error',
-      meetings: [{ id: '1', title: 'Should not show', completedAt: '2026-01-01T00:00:00Z', participants: [] }],
+      meetings: [{ id: '1', title: 'Should not show', completedAt: '2026-01-01T00:00:00Z', participants: [{ displayName: '' }] }],
     }));
     expect(screen.queryByText('Should not show')).not.toBeInTheDocument();
   });
@@ -198,7 +193,9 @@ describe('MeetingsPage — navigation', () => {
   it('links to meeting detail page', () => {
     const meetingsWithId = [{ id: 'abc-123', title: 'My Meeting', completedAt: '2026-01-01T00:00:00Z', participants: [] }];
     renderPage(makeData({ meetings: meetingsWithId, total: 1 }));
-    const link = screen.getByRole('link', { href: '/meetings/abc-123' });
+    // Find the link by its href — `getByRole('link', { href })` is no longer supported,
+    // so query the document directly and confirm the link points to the meeting detail.
+    const link = document.querySelector('a[href="/meetings/abc-123"]') as HTMLAnchorElement;
     expect(link).toBeInTheDocument();
     expect(link).toHaveTextContent('My Meeting');
   });

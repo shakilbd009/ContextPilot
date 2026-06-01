@@ -2,47 +2,83 @@
 
 > Working memory. Human-edited. Do not generate placeholder entries.
 
+> **State vocabulary (used throughout):** **Implemented** = code exists, **Gates Green** = committed code passes `make eval` on the committed ref, **Production-Ready** = `done-auditor` returned Trustworthy / Mostly trustworthy with no P0/P1 blockers.
+
+---
+
+## Recovery state (2026-06-01)
+
+This section is the **ground truth** for what is and is not yet true on disk. Read it before believing any "Done" badge in the tables below.
+
+**Recovery work delivered (committed on `ops/restore-ci-baseline`):**
+- `t_29c0c4a5` (ops): `make demo-check` now falls back `docker compose` v2 → `docker-compose` v1, exits non-zero on real config failure. Playwright chromium/headless-shell/ffmpeg installed. All 5 ContextPilot containers healthy.
+- `t_b684f226` (ops): git repo initialized; CI workflow gates unblocked (`if: false` removed from backend/frontend/e2e/gosec); `make eval` split into blocking vs `make eval-report` non-blocking; `docker-compose` v1 wired into Makefile + `scripts/doctor.sh`. **Repo `shakilbd009/ContextPilot` is now created on GitHub (public, default branch `main`, empty) and `origin` is wired to it via SSH; awaiting Shakil's push.**
+- `t_dc615711` (QA): backend recovery verified — `go test ./...` + `go vet ./...` + `make eval-arch` (5/5) green on the working tree.
+- `t_5d9f1c92` (backend): three Go test root causes fixed (chi route-on-parent typo, validator clock injection, FF metric test isolation).
+- `t_e51a46af` (backend): briefing chi r-vs-g routing typo repaired — `briefing/handler.go:141-153` now uses `g.Get` / `g.Post` inside the FF-middleware group, mirroring the pattern from `upcoming/handler.go:134-138`. `TestHandler_FeatureFlagDisabled_AllRoutes` passes all 7 subtests. **Code change is in commit `8342525` on `ops/restore-ci-baseline`.**
+- `t_e925e18a` (spec-writer, this task): reconciled docs/status/feature-flag lifecycle. Also fixed a recovery-introduced Makefile bug: `eval-backend` and `eval-frontend` each had two separate `cd backend` (or `cd frontend`) invocations in different subshells, so the second `cd` ran from the directory the first `cd` left behind and failed with `cd: backend: No such file or directory`. Both targets now chain their two commands in a single subshell. **As of 2026-06-01, `make eval`, `make eval-backend`, `make eval-frontend`, `make eval-arch`, and `make sync-check` all exit 0 on the working tree.**
+- `t_f6efb43c` (ops, this task): CI workflow hardened to match local gates. (1) Frontend job no longer calls `pnpm lint` (no `lint` script in `package.json`); the `lint` step is now a no-op SKIP that mirrors `make lint` behavior. (2) E2E job installs Node + pnpm + Playwright Chromium with system deps, then waits for backend `/healthz` and frontend root before running tests. (3) Security job installs `gosec` via `go install` and runs it blocking; TruffleHog runs via the official action and also blocks on findings. (4) `scripts/ci-local-dry-run.sh`, `scripts/ci-e2e.sh`, `scripts/ci-security.sh` plus `make ci-local`, `make ci-local-skip-e2e`, `make ci-e2e`, `make ci-security` give a local dry-run equivalent for every blocking CI gate. **Verified:** `make ci-local-skip-e2e` passes 8/8 gates on the working tree (architecture, sync-check, go vet, go test, pnpm install, svelte-check, pnpm test, pnpm build). E2E full-run still reproduces the 14 app-level failures flagged in `t_cf76b921` (out of recovery scope).
+- `t_c37b703c` (ops, this task): source-control delivery committed. Cleaned `.gitignore` (added `backend/server`, `backend/contextpilot-server`, `backend/*.test`, `backend/cover.out`, `frontend/test-results/`, `frontend/playwright-report/`). Stage-and-commit on `ops/restore-ci-baseline` as commit `8342525` (45 files, +630/-315, plus 3 root-level binary deletions: `backend/briefing.test`, `backend/contextpilot-server`, `backend/server` — these were committed by accident in `58d8a6b` and are now removed from tracking; disk files were already absent). CI=1 export in `scripts/ci-local-dry-run.sh` was already in place at commit `6b2e8cf`, so no duplicate work. The two hold files (`frontend/src/test-types.d.ts`, `frontend/tsconfig.test.json`) were committed in a follow-up — see `t_a98cfbfa` below.
+- `t_a98cfbfa` (ops, this task): final recovery wiring. (1) Wired `origin` to `git@github.com:shakilbd009/ContextPilot.git` via SSH. (2) Landed commit `f247fe3` containing the two hold files (`frontend/src/test-types.d.ts` and `frontend/tsconfig.test.json`) that the recovery spec called out as new but `8342525` had left in the working tree. (3) Pushed `ops/restore-ci-baseline` to `origin` (`* [new branch]`); upstream tracking set. (4) Re-verified all blocking gates on the working tree post-commit: `make sync-check` OK, `make eval-arch` 5/5, `go test ./...` 7 packages OK, `go vet ./...` clean, `pnpm check` 0 errors, `pnpm test` 336 passed / 3 skipped / 0 failed (matches the 336/339 baseline), `pnpm build` SSR+client ✔, `make demo-check` OK with the v1 docker-compose fallback. (5) Updated this STATUS.md section to reflect the now-pushed state. **No main-touch; Shakil opens the PR himself from the compare URL in the `t_a98cfbfa` handoff.**
+
+**Honest caveats (as of 2026-06-01, post-commits `6b2e8cf`, `8342525`, `f247fe3`):**
+- **Recovery code is committed and pushed on `ops/restore-ci-baseline` (HEAD = `f247fe3`, tracking `origin/ops/restore-ci-baseline`).** On the prior committed ref `89f250f`, `go test ./...` and `go vet ./...` fail (briefing package has a build error; `internal/upcoming` has 3 failing tests — the same ones the recovery work was supposed to fix). The recovery fix is now in commits `6b2e8cf` (CI hardening) → `8342525` (code-level recovery) → `f247fe3` (two untracked test-helper files finally committed). The branch is pushed to `git@github.com:shakilbd009/ContextPilot.git` and tracking upstream; Shakil can open the PR at the compare URL in the `t_a98cfbfa` handoff.
+- **CI on the remote ref has not been observed yet.** `.github/workflows/eval.yml` is configured to run on PR open; expect the first real CI run when Shakil opens the recovery PR.
+- **E2E:** Playwright browsers are installed for the ops profile; 13 E2E passed and 14 failed in the parent run, all on app-level bugs in meeting-import and upcoming features. These are separate from the recovery scope.
+- **Frontend:** `pnpm test` (vitest) passes 25 files / 336 passed / 3 skipped. `pnpm exec svelte-check` passes with 0 errors and 7 warnings (all unused CSS selectors). `pnpm build` succeeds. All three run green inside the `eval-frontend` Makefile target.
+
+**Open recovery follow-ups (in priority order):**
+1. **DONE in commits `6b2e8cf` + `8342525` + `f247fe3`.** Backend + frontend recovery code committed on `ops/restore-ci-baseline` (HEAD = `f247fe3`, 47 files, +645/-315, plus 3 binary deletions and 2 test-helper files added). Branch is pushed to `origin/ops/restore-ci-baseline`. Shakil opens the PR himself from the compare URL in the `t_a98cfbfa` handoff.
+2. `t_cf76b921` (done-auditor) re-audit after the PR is opened and a real CI run has been observed on the remote ref.
+3. t_a43d9d1b flag-mismatch instrumentation (blocked on PM decision).
+4. t_e51a46af cleanup fold-ins: delete `debug_test.go` / `ff_debug_test.go`; wire or delete dead `ffOverrideKey` / `withFFOverride` / `getFFOverride` code.
+5. Resolve 14 E2E app-level failures (out of recovery scope).
+6. Shakil opens the PR from the pushed branch → triggers the first real CI run → unblocks item 2.
+
 ---
 
 ## Project Phase
 
-| Phase | Status | Notes |
-|-------|--------|-------|
-| Phase 0 — Governance Scaffold | ● Done | All tasks complete |
-| Phase 1 — Backend + Frontend Skeleton | ● In Progress | App Shell shipped; dev server running |
-| Phase 2 — BRD Implementation | ◻ Todo | Pending Phase 1 |
+| Phase | Impl | Gates Green | Prod-Ready |
+|-------|------|-------------|------------|
+| Phase 0 — Governance Scaffold | Yes | Yes (on `89f250f`) | No — pre-feature |
+| Phase 1 — Backend + Frontend Skeleton | Yes | **Local: yes on `f247fe3`; CI: pending PR open** (branch pushed, awaiting PR) | No |
+| Phase 2 — BRD Implementation | Mostly (BRD-01..05) | **Local: code on `f247fe3`; CI: pending PR open** (branch pushed, awaiting PR) | No |
 
 ---
 
 ## Backlog
 
-| ID | Title | Spec Path | Priority | Status |
-|----|-------|-----------|----------|--------|
-| BRD-01 | App Shell | `specs/ui/brd-01-app-shell.md` | P0 | Done |
-| BRD-02 | Manual Meeting Import | `specs/curated/brd-02-manual-meeting-import.md` | P1 | Done |
-| BRD-03 | Meeting Memory Processing | `specs/curated/brd-03-meeting-memory-processing.md` | P1 | Done |
-| BRD-04 | Pre-Call Briefing | `specs/curated/brd-04-pre-call-briefing/brd.md` | P1 | Done |
-| BRD-05 | Manual Upcoming Meeting Creation | `specs/curated/brd-05-manual-upcoming-meeting-creation/brd.md` | P1 | Done |
+| ID | Title | Spec Path | Priority | State |
+|----|-------|-----------|----------|-------|
+| BRD-01 | App Shell | `specs/ui/brd-01-app-shell.md` | P0 | Implemented (frontend routes/UI built; backend/FF scaffolding in place); not Gates Green (recovery-state caveat) |
+| BRD-02 | Manual Meeting Import | `specs/curated/brd-02-manual-meeting-import.md` | P1 | Implemented; not Gates Green |
+| BRD-03 | Meeting Memory Processing | `specs/curated/brd-03-meeting-memory-processing.md` | P1 | Implemented; not Gates Green |
+| BRD-04 | Pre-Call Briefing | `specs/curated/brd-04-pre-call-briefing/brd.md` | P1 | Implemented; r-vs-g routing typo repaired in commit `8342525` (`briefing/handler.go:141-153`); `TestHandler_FeatureFlagDisabled_AllRoutes` passes all 7 subtests; not Gates Green on a remote-CI ref yet |
+| BRD-05 | Manual Upcoming Meeting Creation | `specs/curated/brd-05-manual-upcoming-meeting-creation/brd.md` | P1 | Spec **APPROVED** (2026-05-24 per D-8); code Implemented (chi r-vs-g typo fixed in `8342525`); not Gates Green on a remote-CI ref yet |
+| BRD-06 | Privacy & Retention Controls | `specs/security/brd-06-privacy-retention-controls.md` | P1 | Spec only |
+| BRD-07 | Manual Memory Correction | `specs/domain/brd-07-manual-memory-correction.md` | P2 | Spec only |
 
-| BRD-06 | Privacy & Retention Controls | `specs/security/brd-06-privacy-retention-controls.md` | P1 | Todo |
-| BRD-07 | Manual Memory Correction | `specs/domain/brd-07-manual-memory-correction.md` | P2 | Todo |
+**Note on prior "Done" labels:** earlier versions of this table marked BRD-01..BRD-05 as `Done`. That conflates "spec approved" + "code written" with "passes every gate" + "auditor approved for production". This table now uses the three-state vocabulary. The curated BRD packages themselves (in `specs/curated/`) are still the authoritative spec artifacts.
 
 ---
 
 ## Feature Flags
 
-| Flag | Phase | Status |
-|------|-------|--------|
-| `FF_ENABLE_APP_SHELL` | UI | Active |
-| `FF_ENABLE_MANUAL_MEETING_IMPORT` | Domain | Planned |
-| `FF_ENABLE_MEETING_MEMORY_PROCESSING` | Domain | Planned |
-| `FF_ENABLE_PRE_CALL_BRIEFING` | Domain | Planned |
-| `FF_ENABLE_UPCOMING_MEETINGS` | Domain | Active |
-| `FF_ENABLE_PROVIDER_CONNECTORS` | Infra | Planned |
-| `FF_ENABLE_PRIVACY_RETENTION_CONTROLS` | Security | Planned |
-| `FF_ENABLE_MANUAL_MEMORY_CORRECTION` | Domain | Planned |
+Source of truth for flag **state** (lifecycle column) is `specs/feature-flags.md`. This table mirrors it and adds a **Gates Green** column. Disagreement = bug; fix the more stale file.
 
-Full registry: `specs/feature-flags.md`
+| Flag | Layer | Lifecycle | Gates Green (on commit) | Notes |
+|------|-------|-----------|--------------------------|-------|
+| `FF_ENABLE_APP_SHELL` | UI | **In Dev** (per `specs/feature-flags.md`; an earlier STATUS.md said "Active" — that was wrong and is fixed here) | No — recovery-state caveat | App shell, layout, routing, design tokens |
+| `FF_ENABLE_MANUAL_MEETING_IMPORT` | Domain | **In Dev** (earlier STATUS.md said "Planned" — stale) | No | Manual meeting creation with transcript or notes import |
+| `FF_ENABLE_MEETING_MEMORY_PROCESSING` | Domain | **In Implementation** (earlier STATUS.md said "Planned" — stale) | No | Meeting → memory extraction with version history, conflict review queue, evidence-grounding |
+| `FF_ENABLE_PRE_CALL_BRIEFING` | Domain | **Planned** (matches `specs/feature-flags.md`) | No — r-vs-g fix is in commit `8342525`; not yet Gates Green on a remote-CI ref | Briefing generation |
+| `FF_ENABLE_UPCOMING_MEETINGS` | Domain | **Active** (matches `specs/feature-flags.md`) | No — recovery-state caveat; the r-vs-g fix is in commit `8342525`; not yet Gates Green on a remote-CI ref | Manual upcoming meeting creation — BRD-05 |
+| `FF_ENABLE_PROVIDER_CONNECTORS` | Infra | Planned | n/a | Teams, Meet, Zoom, calendar integrations |
+| `FF_ENABLE_PRIVACY_RETENTION_CONTROLS` | Security | Planned | n/a | PII masking, retention policies, data export |
+| `FF_ENABLE_MANUAL_MEMORY_CORRECTION` | Domain | Planned | n/a | User corrections to meeting summaries |
+
+Full registry: `specs/feature-flags.md`.
 
 ---
 
@@ -65,6 +101,7 @@ Full registry: `specs/feature-flags.md`
 - **Rationale:** Establishing governance before code prevents architectural drift and gives every subsequent agent clear operating rules. BRDs, evals, and feature flags are the contracts between PM, engineering, and QA.
 - **Trade-off:** Phase 0 has no running software. Value delivery starts at Phase 1.
 - **Mitigation:** Docker Compose Phase 0 infra (PostgreSQL, Redis, Mailpit) is included so the stack is ready to run on Day 1 of Phase 1.
+- **Superseded by:** D-009 (Phase 0 closed, Phase 1 skeleton shipped, recovery in progress).
 
 ### D-004: First BRD — App Shell (UI-First)
 - **Decision:** The first BRD is the App Shell UI — layout, routing, design tokens, core pages, and shared components.
@@ -93,26 +130,36 @@ Full registry: `specs/feature-flags.md`
 - **Mitigation:** `REQUEST_CHANGES` or `BLOCK` verdicts create/link backend repair work before QA starts, preventing QA from validating code that is passing tests but not production-quality.
 - **Process audit:** [PA-0001](docs/process-audit/0001-brd03-phase2-missed-backend-reviewer-gate.md) — BRD-03 Phase 2 (2026-05-21) shipped without the gate; QA passed, no customer impact found; gate now enforced in AGENTS.md Rule 7 and kanban-orchestrator.
 
+### D-009: Recovery Sprint — Done-Audit-Driven Reconstruction (2026-05-31 → 2026-06-01)
+- **Trigger:** done-auditor task t_7b66e171 returned verdict **Not done, 1/5**. The board was nearly all done but source control was absent, backend tests failed, frontend typecheck failed, E2E could not launch, CI masked/disabled core gates, runtime demo checks returned success despite docker compose failure, and docs/status/feature flags contradicted implementation state.
+- **Decision:** Spawn a 9-task recovery graph (ops, backend, backend-reviewer, qa, frontend-eng, qa, ops-runtime, spec-writer, done-auditor re-gate). Each parent verifies the underlying state on disk before the next parent claims success.
+- **Rationale:** Definition-of-done is a property of the project, not a label on a card. Claiming "Done" without gates-green is the exact failure mode the recovery is fixing.
+- **Outcome as of 2026-06-01:** most recovery work is Implemented in the working tree but **not committed**. The honest state of the project on the latest commit is still red. See "Recovery state" at the top of this file.
+
 ---
 
 ## Completed Deliverables
 
 | BRD | Tasks | Key Files |
 |-----|-------|-----------|
-| BRD-01 App Shell | 17 tasks done | `frontend/src/` (9 UI components, 10 routes, tokens in app.css), `backend/` skeleton, `hooks.server.ts` auth guard, `/ready` + `/live` health endpoints |
+| BRD-01 App Shell | 17 tasks done | `frontend/src/` (9 UI components, 10 routes, tokens in app.css), `backend/` skeleton, `hooks.server.ts` auth guard, `/ready` + `/live` health endpoints. **Caveat:** "Done" here means "task marked done on the board", not "production-ready". |
 
 ---
 
 ## Active Runs
 
-No active tasks. All pipelines clear.
+- `t_e51a46af` (backend) — repair briefing chi r-vs-g routing typo (code change in working tree; awaiting commit as part of the uncommitted recovery batch)
+- `t_e925e18a` (spec-writer) — reconcile docs and feature-flag status (this task, in progress)
+- The current task dispatched you to do this reconciliation. Other tasks may appear here as the board moves.
 
 ---
 
 ## Notes for Next Session
 
-- BRD-01 App Shell is complete and deployed to local dev server (`http://localhost:5173/`).
+- **Read "Recovery state" at the top of this file first.** It is the honest picture of what is and is not yet committed.
+- BRD-01 App Shell code is in `frontend/src/` and `backend/`. Dev server runs on `http://localhost:5173/`. Whether it is "done" depends on which of the three states you mean.
 - Feature flags are dual-namespace: `FF_ENABLE_*` (server) and `VITE_FF_ENABLE_*` (browser). Both are registered in `.env.example`.
-- Next BRD in queue: BRD-04 Pre-Call Briefing. BRD-02 Manual Meeting Import and BRD-03 Meeting Memory Processing are approved and ready for curation.
+- Next BRDs after recovery: BRD-04 Pre-Call Briefing (r→g fix is in working tree; commit is part of the uncommitted recovery batch), BRD-06 Privacy & Retention Controls (spec only), BRD-07 Manual Memory Correction (spec only).
 - When adding BRDs for domain specs, create corresponding eval files in `evals/e2e/`, `evals/unit/`, `evals/integration/` with the BRD number in the filename.
 - The impeccable polish task (t_549b9b25) completed but the frontend-eng agent could not load the `impeccable` skill — skill availability for that profile needs investigation before the next polish pass.
+- **No GitHub remote is configured.** The `.github/workflows/eval.yml` gates exist but cannot run until Shakil creates/connects a GitHub repo and pushes.

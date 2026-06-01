@@ -1,6 +1,8 @@
 # Security Baseline
 
-> Phase 0 · v1.0.0 · Mandatory reading for all engineers
+> Version 2.0.0 · Mandatory reading for all engineers
+
+> **Current state (2026-06-01):** this document is the policy baseline. Implementation status is tracked separately — see [STATUS.md](../STATUS.md) → "Recovery state". No feature is "Production-Ready" yet. The rules below still apply to every PR; they are not aspirational.
 
 ---
 
