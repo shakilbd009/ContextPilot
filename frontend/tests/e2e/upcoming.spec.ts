@@ -41,12 +41,12 @@ async function signIn(page: import('@playwright/test').Page) {
 async function fillDateInput(page: import('@playwright/test').Page, value: string) {
   const input = page.locator('input[type="date"]');
   await input.waitFor({ state: 'visible' });
-  await input.evaluate((el) => {
+  await input.evaluate((el, val) => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    setter?.call(el, value);
+    setter?.call(el, val);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+  }, value);
   await page.waitForFunction(
     () => {
       const timeInput = document.querySelector('input[type="time"]') as HTMLInputElement | null;

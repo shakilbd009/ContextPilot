@@ -48,12 +48,12 @@ function futureDate(daysFromNow = 1, hour = 14, minute = 0): { date: string; tim
 async function fillDateInput(page: Page, value: string) {
   const input = page.locator('input[type="date"]');
   await input.waitFor({ state: 'visible' });
-  await input.evaluate((el) => {
+  await input.evaluate((el, val) => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    setter?.call(el, value);
+    setter?.call(el, val);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+  }, value);
   await page.waitForTimeout(200);
 }
 
@@ -337,10 +337,17 @@ test('AC-10: Happy path save with transcript', async ({ page }) => {
   await waitForRedirect(page, /\/meetings\/[a-z0-9-]+$/);
   // No query string
   await expect(page).not.toHaveURL(/\?/);
-  await expect(page.getByText('Q3 Planning Session')).toBeVisible();
-  // Also visible in meetings list
+  // On the detail page the title is in a single h1 — be specific to avoid
+  // strict-mode collisions if a prior run left other cards on the list
+  // page after a redirect.
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Q3 Planning Session' }),
+  ).toBeVisible();
+  // Also visible in meetings list. The list can have duplicates of the
+  // same title across prior test runs (state pollution — no per-test
+  // teardown), so use .first() to satisfy strict mode.
   await page.goto('/meetings');
-  await expect(page.getByText('Q3 Planning Session')).toBeVisible();
+  await expect(page.getByText('Q3 Planning Session').first()).toBeVisible();
 });
 
 // ── AC-11 ──────────────────────────────────────────────────────────
@@ -360,9 +367,13 @@ test('AC-11: Save succeeds with notes only (no transcript)', async ({ page }) =>
   await submitForm(page);
   await waitForRedirect(page, /\/meetings\/[a-z0-9-]+$/);
   await expect(page).not.toHaveURL(/\?/);
-  await expect(page.getByText('Notes Only Meeting')).toBeVisible();
+  // Detail page: title is in a single h1 — be specific.
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Notes Only Meeting' }),
+  ).toBeVisible();
+  // List page: .first() to tolerate stale duplicates from prior runs.
   await page.goto('/meetings');
-  await expect(page.getByText('Notes Only Meeting')).toBeVisible();
+  await expect(page.getByText('Notes Only Meeting').first()).toBeVisible();
 });
 
 // ── AC-14 ──────────────────────────────────────────────────────────
@@ -435,9 +446,12 @@ test('AC-16: Double-click save does not create duplicate meetings', async ({ pag
 
   // Wait for redirect to meeting detail
   await page.waitForURL(/\/meetings\/[a-z0-9-]+$/);
-  // Verify we're on the meeting detail page with the correct title
-  const heading = (await page.locator('h1').first().textContent()) ?? '';
-  expect(heading.toLowerCase()).toContain('idempotency test');
+  // Wait for the detail page h1 to actually render the meeting title
+  // (the URL change fires before the page-load data resolves, so we
+  // can't read h1.textContent() immediately after waitForURL).
+  await expect(
+    page.getByRole('heading', { level: 1, name: /idempotency test/i }),
+  ).toBeVisible();
 });
 
 // ── AC-17 ──────────────────────────────────────────────────────────
