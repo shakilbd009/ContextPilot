@@ -53,7 +53,6 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
-    if: false  # Skip until Phase 1 backend exists
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,7 +82,6 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
-    if: false  # Skip until Phase 1 frontend exists
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -121,9 +119,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Go security scan
-        if: false  # Enable when backend exists
         run: |
-          which gosec &>/dev/null && cd backend && gosec ./... || echo "gosec not installed — skipping"
+          if command -v gosec &>/dev/null; then
+            cd backend && gosec ./...
+          else
+            echo "SKIP: gosec not installed"
+            exit 1
+          fi
 
       - name: Check for secrets
         run: |
@@ -139,24 +141,27 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    if: false  # Skip until Phase 1+ full stack running
     needs: [backend, frontend]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Start services
-        run: docker compose up -d
+        run: docker-compose up -d
 
       - name: Wait for services
-        run: sleep 10 && make doctor || true
+        run: sleep 15 && docker-compose ps
 
       - name: Run E2E evals
         run: |
           for f in evals/e2e/*.md; do
             echo "=== E2E: $f ==="
-            # Run playwright tests for each eval
+            # E2E eval specs run via playwright in frontend/
           done
+          cd frontend && pnpm exec playwright test --reporter=list || exit 1
 
   # ─────────────────────────────────────────────────────────
   # Summary

@@ -6,9 +6,13 @@
   interface Props {
     conflicts: BriefingConflict[];
     onResolve: (conflictId: string, resolutionNote: string) => Promise<void>;
+    onResolveConflict?: (conflictId: string, resolutionNote: string) => Promise<void>;
   }
 
-  let { conflicts, onResolve }: Props = $props();
+  let { conflicts, onResolve, onResolveConflict }: Props = $props();
+
+  // Prefer onResolveConflict if provided, otherwise fall back to onResolve
+  const handleResolve = onResolveConflict ?? onResolve;
 
   let resolutions = $state<Record<string, string>>({});
   let submitting = $state<Set<string>>(new Set());

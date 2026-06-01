@@ -6,9 +6,10 @@
     class?: string;
     children: Snippet;
     dismissible?: boolean;
+    role?: string;
   }
 
-  let { variant = 'info', class: className = '', children, dismissible = false }: AlertProps = $props();
+  let { variant = 'info', class: className = '', children, dismissible = false, role: roleProp = 'alert' }: AlertProps = $props();
 
   let visible = $state(true);
 
@@ -21,7 +22,7 @@
 </script>
 
 {#if visible}
-  <div class="alert alert--{variant} {className}" role="alert">
+  <div class="alert alert--{variant} {className}" role={roleProp}>
     <span class="alert__icon" aria-hidden="true">{@html iconMap[variant]}</span>
     <div class="alert__content">
       {@render children()}

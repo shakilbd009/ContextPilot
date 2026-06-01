@@ -92,21 +92,50 @@ dev: docker-up ## Start infrastructure + show service URLs
 	@echo "  FF_ENABLE_APP_SHELL=true make dev"
 
 docker-up: ## Start docker compose services (postgres, redis, mailpit)
-	@docker compose up -d
+	@docker-compose up -d
 	@echo "Infrastructure started. Run 'make doctor' to verify."
 
 docker-down: ## Stop docker compose services
-	@docker compose down
+	@docker-compose down
 
 # ──────────────────────────────────────────
 # Evaluation
 # ──────────────────────────────────────────
-eval: eval-arch ## Run all evals (arch + e2e + integration + security + perf)
+eval: eval-arch ## Run all blocking evals (arch + backend + frontend); fails on any gate failure
 	@echo ""
+	@echo "=== Blocking gates: backend + frontend ==="
+	@make eval-backend || exit 1
+	@make eval-frontend || exit 1
+
+eval-report: ## Non-blocking diagnostics: gather e2e/integration/security/perf results without blocking CI
+	@echo ""
+	@echo "--- E2E (non-blocking) ---"
 	@make eval-e2e || true
+	@echo ""
+	@echo "--- Integration (non-blocking) ---"
 	@make eval-integration || true
+	@echo ""
+	@echo "--- Security (non-blocking) ---"
 	@make eval-security || true
+	@echo ""
+	@echo "--- Perf (non-blocking) ---"
 	@make eval-perf || true
+
+eval-backend: ## Run backend tests/vet (blocking)
+	@if [ ! -d "backend" ] || [ ! -f "backend/go.mod" ]; then \
+		echo "SKIP: backend not scaffolded yet"; \
+	else \
+		cd backend && go test ./... || exit 1; \
+		cd backend && go vet ./... || exit 1; \
+	fi
+
+eval-frontend: ## Run frontend typecheck/build (blocking)
+	@if [ ! -d "frontend" ] || [ ! -f "frontend/package.json" ]; then \
+		echo "SKIP: frontend not scaffolded yet"; \
+	else \
+		cd frontend && pnpm exec svelte-check --tsconfig ./tsconfig.json || exit 1; \
+		cd frontend && pnpm build || exit 1; \
+	fi
 
 eval-e2e: ## Run E2E scenarios (Phase 1+)
 	@if [ ! -d "frontend" ] || [ -z "$$(find frontend -name '*.ts' -type f 2>/dev/null)" ]; then \
@@ -155,7 +184,7 @@ lint: ## Lint backend + frontend (skips if dirs empty)
 	else \
 		echo "SKIP: frontend not scaffolded yet"; \
 	fi
-	@docker compose config >/dev/null 2>&1 && echo "OK: docker compose config valid" || echo "FAIL: docker compose config error"
+	@docker-compose config >/dev/null 2>&1 && echo "OK: docker compose config valid" || echo "FAIL: docker compose config error"
 
 fmt: ## Format code (Phase 1+)
 	@if [ -d "backend" ] && [ -f "backend/go.mod" ]; then \
@@ -180,4 +209,12 @@ migrate: ## Run DB migrations (Phase 1+)
 demo-check: ## Confirm local app/demo readiness
 	@echo "Checking demo readiness..."
 	@bash scripts/doctor.sh
-	@docker compose config >/dev/null 2>&1 && echo "OK: docker compose config valid" || echo "FAIL: docker compose config error"
+	@# Use docker-compose (v1) if docker compose (v2) is unavailable
+	@if docker compose config >/dev/null 2>&1; then \
+		echo "OK: docker compose config valid"; \
+	elif docker-compose config >/dev/null 2>&1; then \
+		echo "OK: docker-compose (legacy) config valid"; \
+	else \
+		echo "FAIL: neither 'docker compose' nor 'docker-compose' can validate config"; \
+		exit 1; \
+	fi

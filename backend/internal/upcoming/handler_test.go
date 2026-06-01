@@ -29,18 +29,25 @@ func buildTestRouter(repo *Repository, pool Pool, ffValue string) http.Handler {
 	os.Setenv(featureFlagEnv, ffValue)
 
 	logger := zerolog.New(os.Stdout).Level(zerolog.WarnLevel)
-	r := chi.NewRouter()
 
-	// Inject mock repository and pool into context
-	r.Use(func(next http.Handler) http.Handler {
+	// Build the router first, THEN set up context injection, THEN return.
+	// The FF flag is read at Handler() call time (route registration), so we
+	// need to restore the original AFTER registering routes with the original
+	// value. Do NOT restore before returning — the returned handler was already
+	// registered under ffValue.
+	router := Handler(&logger, nil)
+
+	// Build a chi router with context injection wrapping the router above.
+	wrapped := chi.NewRouter()
+	wrapped.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), contextKey{}, repo)
 			ctx = context.WithValue(ctx, poolKey{}, pool)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	})
-
-	return Handler(&logger, nil)
+	wrapped.Mount("/", router)
+	return wrapped
 }
 
 // mockPoolForHandler implements Pool interface for handler tests.
