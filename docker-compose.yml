@@ -72,6 +72,18 @@ services:
       VITE_SERVER_URL: http://host.docker.internal:3000
       VITE_FF_ENABLE_MANUAL_MEETING_IMPORT: "true"
       VITE_FF_ENABLE_APP_SHELL: "true"
+      # Upcoming-meetings flags: both namespaces must be set so the
+      # SvelteKit /api/upcoming* +server.ts handlers (server-side, read
+      # FF_ENABLE_UPCOMING_MEETINGS from $env/dynamic/private) accept
+      # requests, and the browser-side /upcoming page can render the
+      # form branch (reads VITE_FF_ENABLE_UPCOMING_MEETINGS at build /
+      # via import.meta.env). Without these the API returns 403
+      # feature_disabled and the /upcoming/new page renders the
+      # "not enabled" alert instead of the create form. Mirrors
+      # .env.example and was the missing env in the E2E container for
+      # t_b48e503b.
+      VITE_FF_ENABLE_UPCOMING_MEETINGS: "true"
+      FF_ENABLE_UPCOMING_MEETINGS: "true"
       FF_ENABLE_MANUAL_MEETING_IMPORT: "true"
       FF_ENABLE_APP_SHELL: "true"
       SERVER_URL: http://backend:3000

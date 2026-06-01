@@ -19,16 +19,26 @@ function makeError(field: string, message: string) {
 // AC-11: paginated meetings list for frontend load function.
 // Proxies to Go backend which implements offset-based pagination.
 // Response shape: { meetings: Meeting[], total: number, page: number, limit: number }
-export const GET: RequestHandler = async ({ fetch, url }) => {
+export const GET: RequestHandler = async ({ fetch, url, request }) => {
   const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10));
   const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') ?? '20', 10)));
 
   const SERVER_URL = env.SERVER_URL ?? 'http://localhost:3000';
 
+  // Backend requires X-User-ID header (Phase 1 auth). Prefer the request
+  // header when present (e.g. set by an upstream middleware); fall back to
+  // the cookie that the demo login flow sets. Without this forward, the
+  // backend returns 401 and the list page renders the "Failed to load
+  // meetings" error branch.
+  const userId = request.headers.get('X-User-ID') ?? getCookie(request, 'X-User-ID') ?? '';
+
   try {
     const res = await fetch(
       `${SERVER_URL}/api/v1/meetings?page=${page}&limit=${limit}`,
-      { credentials: 'include' }
+      {
+        credentials: 'include',
+        headers: userId ? { 'X-User-ID': userId } : {},
+      }
     );
 
     if (!res.ok) {
