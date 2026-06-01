@@ -1,0 +1,2027 @@
+openapi: "3.0.0"
+info:
+  version: "0.1.0"
+  title: ContextPilot API
+  description: |
+    Meeting intelligence REST API.
+    Phase 0 placeholder: metadata and common schemas only.
+    Endpoints added in BRD-02 and later domain specs.
+servers:
+  - url: /api/v1
+    description: Base API path
+
+tags:
+  - name: meetings
+    description: Manual meeting import and retrieval
+  - name: memory
+    description: Meeting memory processing, version history, conflict review, and briefing readiness
+  - name: briefing
+    description: Pre-call briefing generation, versioning, source management
+
+  - name: upcoming
+    description: Manual upcoming meeting creation, list, detail, edit, and cancel
+
+security:
+  - BearerAuth: []
+  - CookieAuth: []
+
+paths:
+  /meetings:
+    get:
+      operationId: listMeetings
+      summary: List all meetings
+      description: Returns an array of Meeting objects with nested participants.
+      tags:
+        - meetings
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: List of meetings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Meeting'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createMeeting
+      summary: Create a completed meeting record
+      description: Creates a new completed meeting with structured participants. Gated by FF_ENABLE_MANUAL_MEETING_IMPORT.
+      tags:
+        - meetings
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeetingCreate'
+      responses:
+        '201':
+          description: Meeting created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  redirect:
+                    type: string
+                    format: uri
+                    example: /meetings/550e8400-e29b-41d4-a716-446655440000
+        '400':
+          description: Validation failure
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field:
+                          type: string
+                          example: title
+                        message:
+                          type: string
+                          example: Title is required and must be at most 500 characters.
+                  values:
+                    type: object
+                    description: Submitted values for form re-rendering
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Idempotency token already consumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    enum: [duplicate]
+                  meetingId:
+                    type: string
+                    format: uuid
+                  originalOutcome:
+                    type: string
+                    example: completed
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  correlationId:
+                    type: string
+                    format: uuid
+
+  /meetings/{id}/memory:
+    get:
+      operationId: getMeetingMemory
+      summary: Get active memory for a meeting
+      description: Returns the active memory version for a meeting, including processing state, briefing readiness, and full memory content. Gated by FF_ENABLE_MEETING_MEMORY_PROCESSING.
+      tags:
+        - memory
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Active memory version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled or no memory available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /meetings/{id}/memory/versions:
+    get:
+      operationId: listMemoryVersions
+      summary: List memory version history
+      description: Returns all memory versions for a meeting, ordered by version number descending.
+      tags:
+        - memory
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Version history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryVersionList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /meetings/{id}/memory/versions/{versionNumber}:
+    get:
+      operationId: getMemoryVersion
+      summary: Get a specific memory version
+      description: Returns a specific memory version by version number.
+      tags:
+        - memory
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: versionNumber
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Specific memory version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Meeting or version not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /meetings/{id}/memory/reprocess:
+    post:
+      operationId: reprocessMemory
+      summary: Queue memory reprocessing
+      description: Queues a manual reprocess or includes/excludes prior memories as processing input. Gated by FF_ENABLE_MEETING_MEMORY_PROCESSING.
+      tags:
+        - memory
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReprocessRequest'
+      responses:
+        '202':
+          description: Reprocess job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReprocessAccepted'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /meetings/{id}/memory/state:
+    get:
+      operationId: getMemoryState
+      summary: Get memory processing state
+      description: Returns the current processing lifecycle state for a meeting's memory.
+      tags:
+        - memory
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Processing state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryProcessingState'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /meetings/{id}/memory/conflicts:
+    get:
+      operationId: listMemoryConflicts
+      summary: List pending conflicts for review
+      description: Returns all pending conflicts for a meeting's memory.
+      tags:
+        - memory
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Conflict list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /meetings/{id}/memory/conflicts/{conflictId}/resolve:
+    post:
+      operationId: resolveMemoryConflict
+      summary: Resolve a memory conflict
+      description: Resolves a pending conflict with an evidence-backed resolution note. Creates a new memory version. Gated by FF_ENABLE_MEETING_MEMORY_PROCESSING.
+      tags:
+        - memory
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: conflictId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConflictResolveRequest'
+      responses:
+        '200':
+          description: Conflict resolved; new memory version returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '400':
+          description: Invalid resolution note
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Meeting or conflict not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /meetings/{id}:
+    get:
+      operationId: getMeeting
+      summary: Get a meeting by ID
+      description: Returns a single Meeting object with nested participants.
+      tags:
+        - meetings
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Meeting details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    patch:
+      operationId: updateMeeting
+      summary: Update a meeting
+      description: Updates a completed meeting record. Triggers stale memory detection for BRD-03. Gated by FF_ENABLE_MANUAL_MEETING_IMPORT.
+      tags:
+        - meetings
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMeetingInput'
+      responses:
+        '200':
+          description: Meeting updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Meeting'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming:
+    get:
+      operationId: listUpcomingMeetings
+      summary: List upcoming meetings for current user
+      description: Returns the current user's non-cancelled upcoming meetings sorted by nearest scheduled start. Gated by FF_ENABLE_UPCOMING_MEETINGS.
+      tags:
+        - upcoming
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [scheduled, cancelled, all]
+          description: Filter by status. Defaults to scheduled (excludes cancelled).
+      responses:
+        '200':
+          description: List of upcoming meetings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UpcomingMeeting'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createUpcomingMeeting
+      summary: Create an upcoming meeting
+      description: Creates a new upcoming meeting with optional participants. Gated by FF_ENABLE_UPCOMING_MEETINGS.
+      tags:
+        - upcoming
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpcomingMeetingCreate'
+      responses:
+        '201':
+          description: Upcoming meeting created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  redirect:
+                    type: string
+                    format: uri
+                    example: /api/v1/upcoming/550e8400-e29b-41d4-a716-446655440000
+        '400':
+          description: Validation failure
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field:
+                          type: string
+                          example: title
+                        message:
+                          type: string
+                          example: Title is required and must be at most 500 characters.
+                        code:
+                          type: string
+                          enum: [missing_title, invalid_scheduled_start, participant_missing_identity, too_many_participants, invalid_email, unknown]
+                  values:
+                    type: object
+                    description: Submitted form values echoed back for preservation.
+                  duplicate_warning:
+                    type: string
+                    description: Advisory warning when a meeting with the same normalized title and scheduled_start minute already exists. Does not block submission.
+                    example: Another upcoming meeting with this title is already scheduled at this time.
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming/{id}:
+    get:
+      operationId: getUpcomingMeeting
+      summary: Get an upcoming meeting by ID
+      description: Returns a single upcoming meeting with participants. Owner-only access. Gated by FF_ENABLE_UPCOMING_MEETINGS.
+      tags:
+        - upcoming
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Upcoming meeting details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpcomingMeeting'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled or not owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Upcoming meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    patch:
+      operationId: updateUpcomingMeeting
+      summary: Update an upcoming meeting
+      description: Updates an upcoming meeting. Owner-only. Edit window is 15 minutes after scheduled_start. Gated by FF_ENABLE_UPCOMING_MEETINGS.
+      tags:
+        - upcoming
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpcomingMeetingUpdate'
+      responses:
+        '200':
+          description: Upcoming meeting updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpcomingMeeting'
+        '400':
+          description: Validation failure or edit window expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field:
+                          type: string
+                        message:
+                          type: string
+                        code:
+                          type: string
+                          enum: [missing_title, invalid_scheduled_start, participant_missing_identity, too_many_participants, invalid_email, not_editable, unknown]
+                  values:
+                    type: object
+                  meaningful_edit:
+                    type: boolean
+                    description: True when the update changed title, scheduled_start, description, client_or_organization, or participant fields — qualifying it as a BRD-04 trigger event.
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled, not owner, or not editable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Upcoming meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming/{id}/cancel:
+    post:
+      operationId: cancelUpcomingMeeting
+      summary: Cancel an upcoming meeting
+      description: Soft-cancels an upcoming meeting. Owner-only. Cancel window is 15 minutes after scheduled_start. Gated by FF_ENABLE_UPCOMING_MEETINGS.
+      tags:
+        - upcoming
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Upcoming meeting cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpcomingMeeting'
+        '400':
+          description: Not cancellable (window expired)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: not_cancellable
+                  message:
+                    type: string
+                    example: Cancellation is no longer available after the meeting window.
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled, not owner, or not cancellable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Upcoming meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming/{meetingId}/briefing:
+    get:
+      operationId: getActiveBriefing
+      summary: Active/latest briefing version for an upcoming meeting
+      description: Returns the active (latest completed) briefing version for an upcoming meeting. Gated by FF_ENABLE_PRE_CALL_BRIEFING.
+      tags:
+        - briefing
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Active briefing version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingVersion'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled or no briefing available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Upcoming meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming/{meetingId}/briefing/versions:
+    get:
+      operationId: listBriefingVersions
+      summary: Version history list
+      description: Returns all briefing versions for an upcoming meeting, ordered by version number descending.
+      tags:
+        - briefing
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Briefing version history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingVersionList'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming/{meetingId}/briefing/versions/{versionNumber}:
+    get:
+      operationId: getBriefingVersion
+      summary: Specific briefing version
+      description: Returns a specific briefing version by version number.
+      tags:
+        - briefing
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: versionNumber
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Specific briefing version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingVersion'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Upcoming meeting or version not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming/{meetingId}/briefing/regenerate:
+    post:
+      operationId: regenerateBriefing
+      summary: Manual regeneration request
+      description: Queues an async briefing regeneration. Latest completed briefing remains available during regeneration. Gated by FF_ENABLE_PRE_CALL_BRIEFING.
+      tags:
+        - briefing
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '202':
+          description: Regeneration job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingRegenerateAccepted'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Regeneration already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming/{meetingId}/briefing/sources/{sourceId}/exclude:
+    post:
+      operationId: excludeBriefingSource
+      summary: Exclude a source meeting
+      description: Marks a source meeting as excluded for the given upcoming meeting. Exclusions persist for future regenerations. Gated by FF_ENABLE_PRE_CALL_BRIEFING.
+      tags:
+        - briefing
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Source excluded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingSourceExclusion'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled or source not accessible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Upcoming meeting or source meeting not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /upcoming/{meetingId}/briefing/sources/{sourceId}/restore:
+    post:
+      operationId: restoreBriefingSource
+      summary: Restore an excluded source meeting
+      description: Restores (undoes) a source exclusion for the upcoming meeting. The exclusion record is soft-deleted via restored_at. Gated by FF_ENABLE_PRE_CALL_BRIEFING.
+      tags:
+        - briefing
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: meetingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Source restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BriefingSourceExclusion'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Feature flag disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Exclusion record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+components:
+  headers:
+    X-Request-ID:
+      description: Correlation ID for distributed tracing
+      schema:
+        type: string
+    X-Forwarded-For:
+      description: Original client IP (from gateway)
+      schema:
+        type: string
+
+  schemas:
+    Problem:
+      description: RFC 7807 error response
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://contextpilot.app/errors/problem
+        title:
+          type: string
+          example: Resource Not Found
+        status:
+          type: integer
+          example: 404
+        detail:
+          type: string
+          example: Meeting with ID 12345 does not exist or you do not have access.
+        instance:
+          type: string
+          format: uri
+          example: /api/v1/meetings/12345
+        request_id:
+          type: string
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        per_page:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 150
+        has_next:
+          type: boolean
+        has_prev:
+          type: boolean
+
+    MeetingSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+        attendees:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [scheduled, completed, cancelled]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Participant:
+      type: object
+      description: A structured meeting participant attached to a meeting record.
+      required:
+        - id
+        - displayName
+        - displayOrder
+      properties:
+        id:
+          type: string
+          format: uuid
+        meetingId:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID of the parent meeting. Present when listed under meeting_participants.
+        displayName:
+          type: string
+          maxLength: 500
+          description: Display name as entered; leading/trailing whitespace trimmed.
+        email:
+          type: string
+          format: email
+          nullable: true
+        organization:
+          type: string
+          nullable: true
+        role:
+          type: string
+          nullable: true
+        displayOrder:
+          type: integer
+          description: Sort order within the meeting participant list.
+
+    Meeting:
+      type: object
+      description: A completed meeting record with structured participants.
+      required:
+        - id
+        - title
+        - completedAt
+        - meeting_participants
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 500
+        completedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the meeting was completed.
+        transcript:
+          type: string
+          nullable: true
+          description: Full transcript text, null when notes-only.
+        notes:
+          type: string
+          nullable: true
+          description: Meeting notes, null when transcript-only.
+        meeting_participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Participant"
+        contentSource:
+          type: string
+          enum: [transcript, notes, both]
+          description: Derived at save time based on which content fields are populated.
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+          format: uuid
+          description: User ID of the meeting creator.
+        displayOrder:
+          type: integer
+          description: Sort order for display purposes.
+
+    MeetingCreate:
+      type: object
+      description: Request body for creating a new completed meeting record.
+      required:
+        - title
+        - completedAt
+        - participants
+        - idempotencyToken
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        completedAt:
+          type: string
+          format: date-time
+        participants:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - displayName
+            properties:
+              displayName:
+                type: string
+                maxLength: 500
+              email:
+                type: string
+                format: email
+              organization:
+                type: string
+              role:
+                type: string
+        transcript:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        idempotencyToken:
+          type: string
+          format: uuid
+          description: UUID generated on form load; dedupes repeated saves within 24h.
+
+    UpdateMeetingInput:
+      type: object
+      description: Request body for updating a completed meeting record. All fields optional — only provided fields are updated.
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        completedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the meeting was completed.
+        transcript:
+          type: string
+          nullable: true
+          description: Full transcript text.
+        notes:
+          type: string
+          nullable: true
+          description: Meeting notes.
+        participants:
+          type: array
+          description: Full replacement participant list. Omit to keep existing participants.
+          items:
+            type: object
+            required:
+              - displayName
+            properties:
+              displayName:
+                type: string
+                maxLength: 500
+              email:
+                type: string
+                format: email
+                nullable: true
+              organization:
+                type: string
+                nullable: true
+              role:
+                type: string
+                nullable: true
+
+    ActionItem:
+      type: object
+      properties:
+        description:
+          type: string
+        owner:
+          type: string
+          nullable: true
+        due_date:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [open, completed]
+
+    Risk:
+      type: object
+      properties:
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high]
+        owner:
+          type: string
+          nullable: true
+
+    StakeholderNote:
+      type: object
+      properties:
+        attendee:
+          type: string
+        note:
+          type: string
+
+    Briefing:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        meeting_id:
+          type: string
+          format: uuid
+        generated_at:
+          type: string
+          format: date-time
+        summary:
+          type: string
+        decisions:
+          type: array
+          items:
+            type: string
+        action_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActionItem"
+        open_questions:
+          type: array
+          items:
+            type: string
+        risks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Risk"
+        stakeholder_notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/StakeholderNote"
+        suggested_agenda:
+          type: array
+          items:
+            type: string
+        recommended_objective:
+          type: string
+
+    # ─── Upcoming Meeting Schemas ────────────────────────────────────────────
+
+    UpcomingMeeting:
+      type: object
+      description: A manually created upcoming meeting for pre-call preparation. Gated by FF_ENABLE_UPCOMING_MEETINGS.
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 500
+          description: Meeting title as entered.
+        scheduled_start:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp for the scheduled meeting start.
+        description:
+          type: string
+          nullable: true
+          description: Optional meeting description or agenda.
+        client_or_organization:
+          type: string
+          nullable: true
+          description: Optional client or organization name associated with this meeting.
+        status:
+          type: string
+          enum: [scheduled, cancelled]
+          description: Current status of the upcoming meeting.
+        created_by:
+          type: string
+          format: uuid
+          description: User ID of the meeting owner.
+        participants:
+          type: array
+          description: Structured participant rows for matching and preparation.
+          items:
+            $ref: '#/components/schemas/UpcomingMeetingParticipant'
+        briefing_status:
+          type: string
+          nullable: true
+          enum: [disabled, unavailable, queued, generating, ready, stale, failed, unknown]
+          description: Current briefing generation status. Null when BRD-04 is disabled or briefing unavailable.
+        is_briefing_stale:
+          type: boolean
+          description: True when the active briefing was generated before the latest meaningful edit and regeneration is in progress.
+        editable:
+          type: boolean
+          description: True when the edit window (15 min after scheduled_start) has not passed.
+        cancellable:
+          type: boolean
+          description: True when the cancel window (15 min after scheduled_start) has not passed.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpcomingMeetingParticipant:
+      type: object
+      description: A structured participant attached to an upcoming meeting. Used for BRD-04 meeting matching. Does not grant access rights.
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: Display name as entered. At least one of display_name or email must be present.
+        email:
+          type: string
+          nullable: true
+          format: email
+          description: Email address. Used for BRD-04 matching. At least one of display_name or email must be present.
+        organization:
+          type: string
+          nullable: true
+          description: Optional organization name.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UpcomingMeetingCreate:
+      type: object
+      description: Request body for creating a new upcoming meeting. Gated by FF_ENABLE_UPCOMING_MEETINGS.
+      required:
+        - title
+        - scheduled_start
+      properties:
+        title:
+          type: string
+          maxLength: 500
+          description: Required meeting title.
+        scheduled_start:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp. Must be at least 15 minutes in the future relative to server time.
+        description:
+          type: string
+          nullable: true
+          description: Optional meeting description or agenda.
+        client_or_organization:
+          type: string
+          nullable: true
+          description: Optional client or organization name.
+        participants:
+          type: array
+          description: Optional participant rows. Maximum 50 participants enforced with `too_many_participants` validation class.
+          maxItems: 50
+          items:
+            type: object
+            properties:
+              display_name:
+                type: string
+                nullable: true
+                maxLength: 500
+                description: At least one of display_name or email must be provided.
+              email:
+                type: string
+                nullable: true
+                format: email
+                description: At least one of display_name or email must be provided.
+              organization:
+                type: string
+                nullable: true
+            required:
+              - display_name
+              - email
+            additionalProperties: false
+          example:
+            - display_name: Alice Smith
+              email: alice@example.com
+              organization: Acme Corp
+
+    UpcomingMeetingUpdate:
+      type: object
+      description: Request body for updating an upcoming meeting. All fields optional — only provided fields are updated. Gated by FF_ENABLE_UPCOMING_MEETINGS.
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        scheduled_start:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp. Must be at least 15 minutes in the future relative to server time.
+        description:
+          type: string
+          nullable: true
+        client_or_organization:
+          type: string
+          nullable: true
+        participants:
+          type: array
+          description: Full replacement participant list. Omit to keep existing participants. Adding or removing a participant is a meaningful edit triggering BRD-04 regeneration.
+          maxItems: 50
+          items:
+            type: object
+            properties:
+              display_name:
+                type: string
+                nullable: true
+                maxLength: 500
+              email:
+                type: string
+                nullable: true
+                format: email
+              organization:
+                type: string
+                nullable: true
+            required:
+              - display_name
+              - email
+            additionalProperties: false
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+
+  # ─── Memory Processing Schemas ───────────────────────────────────────────
+
+    MemoryProcessingState:
+      type: object
+      description: Current processing lifecycle state for a meeting's memory.
+      properties:
+        meeting_id:
+          type: string
+          format: uuid
+        processing_state:
+          type: string
+          enum: [not_processed, queued, processing, completed, completed_with_insufficient_evidence, failed, stale, reprocessing, retrying, retry_exhausted]
+        active_version_number:
+          type: integer
+          nullable: true
+          description: Present when a memory version exists.
+        is_stale:
+          type: boolean
+          description: True when source meeting has been edited after the active version was created.
+        latest_job:
+          type: object
+          nullable: true
+          properties:
+            job_id:
+              type: string
+              format: uuid
+            status:
+              type: string
+              enum: [queued, processing, completed, completed_with_insufficient_evidence, failed, retrying, retry_exhausted]
+            retry_count:
+              type: integer
+            failure_reason:
+              type: string
+              nullable: true
+              description: User-safe error description; never contains PII or raw content.
+            correlation_id:
+              type: string
+              format: uuid
+            queued_at:
+              type: string
+              format: date-time
+
+    MemoryVersionSummary:
+      type: object
+      properties:
+        version_number:
+          type: integer
+        is_active:
+          type: boolean
+        status:
+          type: string
+          enum: [active, superseded, conflict_review]
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+          nullable: true
+
+    MemoryVersionList:
+      type: object
+      properties:
+        meeting_id:
+          type: string
+          format: uuid
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryVersionSummary'
+
+    MemoryContent:
+      type: object
+      description: Full structured memory content — schema defined in ADR-0006.
+      additionalProperties: true
+      # The actual shape follows the Memory JSON schema from ADR-0006,
+      # with seven categories: summary, decisions, action_items,
+      # risks_blockers, open_questions, stakeholder_notes,
+      # next_recommended_focus, plus briefing_readiness.
+
+    Memory:
+      type: object
+      properties:
+        meeting_id:
+          type: string
+          format: uuid
+        version_number:
+          type: integer
+        status:
+          type: string
+          enum: [active]
+        processing_state:
+          type: string
+          enum: [completed, completed_with_insufficient_evidence, failed, stale, reprocessing, retrying, retry_exhausted]
+        is_stale:
+          type: boolean
+        is_briefing_ready:
+          type: boolean
+        briefing_readiness:
+          type: object
+          properties:
+            ready:
+              type: boolean
+            core_categories_ready:
+              type: boolean
+            blocking_conflicts:
+              type: array
+              items:
+                type: string
+                format: uuid
+            insufficient_categories:
+              type: array
+              items:
+                type: string
+        content:
+          $ref: '#/components/schemas/MemoryContent'
+        prior_memories_used:
+          type: array
+          items:
+            type: object
+            properties:
+              meeting_id:
+                type: string
+                format: uuid
+              title:
+                type: string
+              completed_at:
+                type: string
+                format: date-time
+              match_confidence:
+                type: string
+                enum: [safe_match, uncertain]
+        created_at:
+          type: string
+          format: date-time
+
+    ReprocessRequest:
+      type: object
+      description: Optional body for POST /meetings/:id/memory/reprocess.
+      properties:
+        excluded_prior_memory_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Prior memory version IDs to exclude from reprocessing input.
+        included_prior_memory_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Prior memory version IDs to include as processing input (user-added).
+        reason:
+          type: string
+          enum: [user_corrected_includes, source_edit, manual_retry]
+
+    ReprocessAccepted:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        correlation_id:
+          type: string
+          format: uuid
+
+    ConflictItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        category:
+          type: string
+          enum: [summary, decisions, action_items, risks_blockers, open_questions]
+        current_item:
+          type: object
+          properties:
+            id:
+              type: string
+            statement:
+              type: string
+            quality_status:
+              type: string
+              enum: [strong_evidence, weak_evidence]
+        prior_item:
+          type: object
+          properties:
+            memory_version_id:
+              type: string
+              format: uuid
+            statement:
+              type: string
+            quality_status:
+              type: string
+              enum: [strong_evidence, weak_evidence]
+        created_at:
+          type: string
+          format: date-time
+
+    ConflictList:
+      type: object
+      properties:
+        meeting_id:
+          type: string
+          format: uuid
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConflictItem'
+
+    ConflictResolveRequest:
+      type: object
+      properties:
+        resolution_note:
+          type: string
+          description: User's evidence-backed resolution text, or a statement that evidence is insufficient.
+
+    # ─── Briefing Schemas ────────────────────────────────────────────────
+
+    BriefingVersion:
+      type: object
+      description: A single briefing version for an upcoming meeting — matches briefing_versions table + Briefing JSON Content Schema from BRD-04.
+      properties:
+        id:
+          type: string
+          format: uuid
+        upcoming_meeting_id:
+          type: string
+          format: uuid
+        version_number:
+          type: integer
+        status:
+          type: string
+          enum: [active, superseded]
+        is_active:
+          type: boolean
+        result:
+          type: string
+          enum: [ready, ready_with_caveats, no_prior_memory, failed]
+        preparation_status:
+          type: string
+          enum: [generating, ready, ready_with_caveats, no_prior_memory, stale, failed, regenerating]
+        content:
+          type: object
+          description: Full structured briefing output per BRD-04 Briefing JSON Content Schema.
+          properties:
+            concise_summary:
+              type: object
+              properties:
+                objective:
+                  type: string
+                preparation_status:
+                  type: string
+                recommended_focus:
+                  type: string
+                top_prior_context:
+                  type: string
+                open_actions:
+                  type: string
+                risks_questions:
+                  type: string
+            detailed_sections:
+              type: object
+              properties:
+                previous_relevant_context:
+                  type: object
+                  properties:
+                    statement:
+                      type: string
+                    quality_status:
+                      type: string
+                      enum: [strong_evidence, weak_evidence, insufficient_evidence, conflicting_evidence]
+                important_prior_decisions:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: string
+                    quality_status:
+                      type: string
+                open_action_items:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: string
+                    quality_status:
+                      type: string
+                unresolved_risks_blockers:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: string
+                    quality_status:
+                      type: string
+                open_questions:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: string
+                    quality_status:
+                      type: string
+                stakeholder_notes:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: string
+                    quality_status:
+                      type: string
+                suggested_questions:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: string
+                suggested_agenda:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: string
+            sources:
+              type: array
+              items:
+                type: object
+                properties:
+                  source_meeting_id:
+                    type: string
+                    format: uuid
+                  relatedness_reasons:
+                    type: array
+                    items:
+                      type: string
+                  quality_status:
+                    type: string
+                    enum: [strong_evidence, weak_evidence, insufficient_evidence, conflicting_evidence]
+            no_prior_memory_shell:
+              type: object
+              properties:
+                generated:
+                  type: boolean
+                objective:
+                  type: string
+                recommended_focus:
+                  type: string
+                suggested_prep_questions:
+                  type: array
+                  items:
+                    type: string
+            _meta:
+              type: object
+              description: Internal metadata — not user-visible.
+              properties:
+                source_memory_version_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+        source_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        trigger_type:
+          type: string
+          enum: [auto, manual_regenerate]
+
+    BriefingVersionSummary:
+      type: object
+      properties:
+        version_number:
+          type: integer
+        is_active:
+          type: boolean
+        status:
+          type: string
+          enum: [active, superseded]
+        result:
+          type: string
+          enum: [ready, ready_with_caveats, no_prior_memory, failed]
+        preparation_status:
+          type: string
+          enum: [generating, ready, ready_with_caveats, no_prior_memory, stale, failed, regenerating]
+        created_at:
+          type: string
+          format: date-time
+        trigger_type:
+          type: string
+          enum: [auto, manual_regenerate]
+
+    BriefingVersionList:
+      type: object
+      properties:
+        upcoming_meeting_id:
+          type: string
+          format: uuid
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/BriefingVersionSummary'
+
+    BriefingRegenerateAccepted:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        correlation_id:
+          type: string
+          format: uuid
+
+    BriefingSourceExclusion:
+      type: object
+      description: A source meeting exclusion record for an upcoming meeting — matches briefing_source_exclusions table per ADR-0012.
+      properties:
+        id:
+          type: string
+          format: uuid
+        upcoming_meeting_id:
+          type: string
+          format: uuid
+        excluded_source_meeting_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        restored_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL means active exclusion; set means the user restored (undo) the exclusion.
+
+  securitySchemes:

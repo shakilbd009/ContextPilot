@@ -1,0 +1,188 @@
+name: ContextPilot CI — Eval Pipeline
+on:
+  push:
+    branches: [main, '**/brd-**']
+  pull_request:
+    branches: [main]
+
+env:
+  # Pin package manager version
+  PNPM_VERSION: "10.32.1"
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # Architecture Checks
+  # ─────────────────────────────────────────────────────────
+  architecture:
+    name: Architecture Rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+
+      - name: Run architecture checks
+        run: |
+          for f in evals/architecture/check-*.sh; do
+            if [ -f "$f" ]; then
+              bash "$f" || exit 1
+            fi
+          done
+
+  # ─────────────────────────────────────────────────────────
+  # Sync Check
+  # ─────────────────────────────────────────────────────────
+  sync-check:
+    name: Status Sync Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run sync check
+        run: |
+          bash scripts/check-status-sync.sh
+
+  # ─────────────────────────────────────────────────────────
+  # Backend (requires Phase 1)
+  # ─────────────────────────────────────────────────────────
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    if: false  # Skip until Phase 1 backend exists
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+
+      - name: Go vet
+        run: cd backend && go vet ./...
+
+      - name: Go lint
+        run: |
+          if command -v golangci-lint &>/dev/null; then
+            cd backend && golangci-lint run ./...
+          else
+            echo "golangci-lint not installed — skipping"
+          fi
+
+      - name: Go test
+        run: cd backend && go test ./...
+
+  # ─────────────────────────────────────────────────────────
+  # Frontend (requires Phase 1)
+  # ─────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    if: false  # Skip until Phase 1 frontend exists
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install pnpm
+        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+
+      - name: Install deps
+        run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: cd frontend && pnpm exec svelte-check --tsconfig ./tsconfig.json
+
+      - name: Lint
+        run: cd frontend && pnpm lint
+
+      - name: Build
+        run: cd frontend && pnpm build
+
+  # ─────────────────────────────────────────────────────────
+  # Security
+  # ─────────────────────────────────────────────────────────
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Go security scan
+        if: false  # Enable when backend exists
+        run: |
+          which gosec &>/dev/null && cd backend && gosec ./... || echo "gosec not installed — skipping"
+
+      - name: Check for secrets
+        run: |
+          if command -v trufflehog &>/dev/null; then
+            trufflehog filesystem .
+          else
+            echo "trufflehog not installed — skipping"
+          fi
+
+  # ─────────────────────────────────────────────────────────
+  # E2E Tests (requires Phase 1 + services up)
+  # ─────────────────────────────────────────────────────────
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    if: false  # Skip until Phase 1+ full stack running
+    needs: [backend, frontend]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start services
+        run: docker compose up -d
+
+      - name: Wait for services
+        run: sleep 10 && make doctor || true
+
+      - name: Run E2E evals
+        run: |
+          for f in evals/e2e/*.md; do
+            echo "=== E2E: $f ==="
+            # Run playwright tests for each eval
+          done
+
+  # ─────────────────────────────────────────────────────────
+  # Summary
+  # ─────────────────────────────────────────────────────────
+  summary:
+    name: Eval Summary
+    needs: [architecture, sync-check, backend, frontend, security, e2e]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "## ContextPilot Eval Summary"
+          echo ""
+          echo "| Job | Status |"
+          echo "|-----|--------|"
+          echo "| Architecture | ${{ needs.architecture.result }} |"
+          echo "| Sync Check | ${{ needs.sync-check.result }} |"
+          echo "| Backend | ${{ needs.backend.result }} |"
+          echo "| Frontend | ${{ needs.frontend.result }} |"
+          echo "| Security | ${{ needs.security.result }} |"
+          echo "| E2E Tests | ${{ needs.e2e.result }} |"
+          echo ""
+          if [[ "${{ needs.architecture.result }}" == "success" ]] && \
+             [[ "${{ needs.sync-check.result }}" == "success" ]]; then
+            echo "✅ Core checks passed — ready for PR review"
+          else
+            echo "❌ Core checks failed — address before merge"
+          fi

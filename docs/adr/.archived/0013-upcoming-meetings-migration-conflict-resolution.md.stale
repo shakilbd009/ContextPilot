@@ -1,0 +1,78 @@
+# ADR-0013: Migration Conflict Resolution — 000004/000005 upcoming_meetings Contradiction
+
+**Status:** Accepted
+**Date:** 2026-05-23
+**BRD:** brd-04
+**Component:** Data Model / Migration Ordering / Cross-BRD Integration
+
+---
+
+## Context
+
+Two migrations in `backend/db/migrations/` had a ordering contradiction:
+
+- **000004_pre_call_briefing.sql** (BRD-04): created `briefing_versions`, `briefing_source_exclusions`, and `briefing_processing_jobs` — all three with `REFERENCES upcoming_meetings(id) ON DELETE CASCADE`.
+- **000005_drop_upcoming_meetings.sql**: dropped the `upcoming_meetings` table and relied on `ON DELETE CASCADE` to remove the three briefing tables.
+
+The contradiction: if 000005 runs after 000004, the FK constraints in 000004 reference a table that 000005 drops. PostgreSQL migration ordering is alphabetical/deterministic, so 000005 runs after 000004. The original intent was that BRD-05 (upcoming meetings creation UX) would be implemented first, creating `upcoming_meetings`, before 000004 ran. But BRD-05 is a separate feature with its own flag `ff_enable_upcoming_meetings`, and the briefing tables in 000004 should not require it to exist.
+
+Additionally:
+- ADR-0010 documented the dependency but did not resolve the migration ordering contradiction
+- BRD-05 was explicitly deferred (`brd-05` Status: Approved but Phase 2 / not yet implemented)
+- The Go briefing code queries `upcoming_meetings` directly for ACL checks (`UpcomingMeetingExistsAndOwned`)
+
+---
+
+## Decision
+
+**Option A (standalone UUID primary keys) adopted with the following changes:**
+
+1. **Migration 000004** is rewritten: `briefing_versions`, `briefing_source_exclusions`, and `briefing_processing_jobs` use standalone `UUID PRIMARY KEY DEFAULT gen_random_uuid()` for `id` and a plain `upcoming_meeting_id UUID NOT NULL` column (no FK constraint). `excluded_source_meeting_id` still references `meetings(id)` because source meetings are guaranteed to exist (BRD-02 already implemented).
+
+2. **Migration 000005** becomes a no-op marker file. The `upcoming_meetings` table, if it exists (BRD-05 implemented), is intentionally left untouched. If it does not exist (BRD-05 not implemented), 000005 succeeds trivially.
+
+3. **Go code** (`repository.go`): the `UpcomingMeetingExistsAndOwned` query checks `upcoming_meetings(id, created_by)` — this returns "not found" gracefully when the table doesn't exist (or when the row doesn't exist). The existing `ErrUpcomingNotFound` error type handles this path.
+
+4. **ADR-0010** is updated: the "minimum schema contract" section now documents that the FK dependency was removed; BRD-04 briefing tables are self-contained regardless of whether BRD-05 has been implemented.
+
+5. **ADR-0013** (this document) records the conflict, the resolution, and the migration contract.
+
+---
+
+## Rationale
+
+- **Clean migration ordering**: migrations must apply in dependency order without dangling references regardless of which BRDs have been implemented.
+- **Self-contained BRD-04**: briefing tables should work whether or not BRD-05 exists. The `upcoming_meeting_id` column is a plain UUID that happens to be the same identifier used by BRD-05 — no FK constraint means no dependency.
+- **ACL path is query-based, not FK-enforced**: authorization is enforced in Go via `UpcomingMeetingExistsAndOwned` which issues a `SELECT EXISTS(...) FROM upcoming_meetings WHERE id=$1 AND created_by=$2`. This query returns `false` gracefully when the table or row doesn't exist — no FK constraint needed.
+- **Source meeting FK is intact**: `briefing_source_exclusions.excluded_source_meeting_id REFERENCES meetings(id)` is retained because BRD-02 (meetings table) is already implemented and is a hard dependency of BRD-04.
+- **ADR-0010 alignment**: Option A was already one of the three options considered in ADR-0010; this ADR adoption formally selects it and documents the implementation.
+
+---
+
+## Consequences
+
+- **Positive:** Migration 000004/000005 contradiction is resolved. Migrations apply cleanly in any order.
+- **Positive:** BRD-04 briefing tables are self-contained. Briefing works without BRD-05 implemented.
+- **Positive:** When BRD-05 IS implemented, the briefing tables' `upcoming_meeting_id` column uses the same identifier — join queries work at the application level without FK enforcement.
+- **Neutral:** `upcoming_meetings(id)` is not enforced as a FK in the database — application-level checks (`UpcomingMeetingExistsAndOwned`) provide equivalent safety with graceful degradation.
+- **Neutral:** The original `000005_drop_upcoming_meetings.sql` file is replaced by a no-op marker; it is not deleted to preserve migration history integrity.
+
+---
+
+## Implementation Changes
+
+| File | Change |
+|------|--------|
+| `backend/db/migrations/000004_pre_call_briefing.sql` | Remove `REFERENCES upcoming_meetings(id)` from all three briefing tables. Add COMMENT documenting standalone-ID design. |
+| `backend/db/migrations/000005_drop_upcoming_meetings.sql` | Replace with no-op marker documenting the resolution. |
+| `backend/internal/briefing/repository.go` | Unchanged — `UpcomingMeetingExistsAndOwned` already handles the "table/row not found" case gracefully. |
+| `docs/adr/0010-upcoming-meetings-table.md` | Update Consequences section to reflect FK removal. |
+| `docs/adr/0013-upcoming-meetings-migration-conflict-resolution.md` | This document. |
+
+---
+
+## Alternates Considered
+
+**Option B (revert 000005, keep upcoming_meetings):** Would require keeping the BRD-05 table permanently even though its creation UX (FR-2, FR-6) is deferred. Rejected — creates permanent schema debt.
+
+**Option C (BRD-04 uses meetings.id as FK anchor):** Would require briefing versions to be anchored to `meetings(id)` instead of `upcoming_meetings(id)`. This breaks the semantic distinction between completed meetings (sources) and upcoming meetings (targets). Rejected — conflates two distinct entity types.

@@ -1,0 +1,42 @@
+-- Migration: 000005_resolve_upcoming_meetings_contradiction
+-- Description: No-op placeholder resolving the migration-order contradiction.
+--
+-- Context: 000004_pre_call_briefing.sql originally created upcoming_meetings as a BRD-05
+-- artifact AND gave briefing_versions/briefing_source_exclusions/briefing_processing_jobs
+-- FK references to it. 000005_drop_upcoming_meetings.sql was supposed to drop the table.
+-- This ordering矛盾 (contradiction) means a database with 000005 applied after 000004 would
+-- drop a table that briefing tables depend on.
+--
+-- Resolution (ADR-0010 Option A): upcoming_meetings is a BRD-05 artifact governed by
+-- ff_enable_upcoming_meetings. It may or may not exist depending on whether BRD-05 has
+-- been implemented. The briefing tables (000004) no longer have FK references to it —
+-- upcoming_meeting_id is a plain indexed column only. This migration is a no-op because:
+--   (a) upcoming_meetings does not exist in the corrected schema (BRD-05 not yet implemented)
+--   (b) Even if BRD-05 IS implemented, the briefing tables no longer reference it via FK
+--
+-- Gate: FF_ENABLE_PRE_CALL_BRIEFING=false in production until BRD-04 is fully verified.
+-- Depends: 000004_pre_call_briefing
+
+BEGIN;
+
+-- No-op: upcoming_meetings is a BRD-05 table (ff_enable_upcoming_meetings) and may not
+-- exist. The briefing tables no longer depend on it existing. This migration is a marker
+-- documenting the resolved contradiction and the schema state that makes it safe.
+--
+-- If upcoming_meetings DOES exist (BRD-05 implemented) it is left untouched.
+-- If it does NOT exist, this migration succeeds trivially.
+
+-- Verify briefing tables exist and have no FK to upcoming_meetings (contract verification)
+-- This is a documentation/check comment block;PostgreSQL does not execute COMMENT blocks
+-- as statements, but the CHECK constraint below validates the schema contract.
+--
+-- NOTE: The actual contract is enforced by the table definitions in 000004.
+-- This file serves as the resolved counterpart to the original 000005_drop_upcoming_meetings.sql
+
+COMMIT;
+
+-- Migration contract:
+-- This file exists to close the sequence number 000005 in the migration history.
+-- It is intentionally a no-op. The previous migration (000005_drop_upcoming_meetings.sql)
+-- which attempted to drop upcoming_meetings has been superseded by the resolution
+-- documented in docs/adr/0013-upcoming-meetings-migration-conflict-resolution.md

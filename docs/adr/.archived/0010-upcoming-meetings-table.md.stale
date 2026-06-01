@@ -1,0 +1,57 @@
+# ADR-0010: upcoming_meetings Table — Existence or Creation
+
+**Status:** Accepted
+**Date:** 2026-05-23
+**BRD:** brd-04
+**Component:** Data Model / Cross-BRD Integration
+
+---
+
+## Context
+
+BRD-04's data model uses `upcoming_meetings(id)` as a foreign key in `briefing_versions` and `briefing_source_exclusions`. The `upcoming_meetings` table is never defined in any published BRD (BRD-02, BRD-03, or BRD-04). BRD-04 implementation cannot proceed without this table being defined.
+
+The implementation_readiness.md correctly identifies this as a known risk.
+
+---
+
+## Decision
+
+BRD-04 implementation assumes `upcoming_meetings` table exists from a separate feature. If it does not exist when BRD-04 implementation begins, a separate BRD (BRD-05 or equivalent) must be created to define it.
+
+The minimal viable schema for BRD-04 to function:
+
+| Field | Type | Required | Note |
+|-------|------|----------|------|
+| `id` | UUID | Yes | Primary key |
+| `title` | TEXT | Yes | — |
+| `scheduled_start` | TIMESTAMPTZ | Yes | Used for chronology signal anchoring in BRD-04 FR-4 |
+| `created_by` | UUID | Yes | FK to users; owner for ACL per ADR-0009 |
+
+Authorization follows ADR-0009 (owner-only for MVP).
+
+---
+
+## Rationale
+
+- BRD-04 FR-2 specifies that upcoming meeting creation triggers async briefing generation. The creation itself is out of scope for BRD-04 MVP — it is assumed to be handled by a separate upcoming-meeting-creation feature.
+- Defining `upcoming_meetings` in BRD-04 would blur scope boundaries. BRD-04's responsibility is briefing generation, not upcoming meeting management.
+- If the table doesn't exist when BRD-04 implementation starts, creating a minimal BRD-05 is lower risk than bolting it onto BRD-04.
+
+---
+
+## Consequences
+
+- **Positive:** Clean scope separation. BRD-04 stays focused on briefing generation.
+- **Positive:** BRD-04 briefing tables (`briefing_versions`, `briefing_source_exclusions`, `briefing_processing_jobs`) are self-contained and do not require `upcoming_meetings` to exist. The `upcoming_meeting_id` column is a plain indexed UUID; application-level checks (`UpcomingMeetingExistsAndOwned`) enforce authorization without FK constraints.
+- **Negative:** There is an implicit dependency on a feature not yet defined. This is a known gap and the PM/lead should track it.
+- **Neutral:** Briefing version history (FR-14) is tied to the upcoming meeting's lifecycle, which is appropriate.
+- **Resolved:** Migration ordering contradiction between 000004/000005 is resolved per ADR-0013. The original FK references from briefing tables to `upcoming_meetings(id)` have been removed; `upcoming_meeting_id` is now a plain indexed column.
+
+---
+
+## Alternates Considered
+
+**Option B (Inline in BRD-04):** Add `upcoming_meetings` schema to BRD-04 data model. Rejected because upcoming meeting creation UX (FR-2, FR-6 in the raw BRD) involves more than the table schema — it includes UI, authorization flow, and potential calendar integrations that are outside BRD-04's briefing focus.
+
+**Option C (Assume and proceed):** Same as the adopted option. The distinction is that this ADR documents the minimum schema contract so implementation has a clear target.

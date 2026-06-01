@@ -1,0 +1,32 @@
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Build outputs
+backend/bin/
+frontend/.svelte-kit/
+frontend/build/
+frontend/node_modules/
+frontend/.vercel/
+
+# Test and coverage
+coverage/
+*.cover
+*.out
+
+# Docker
+docker/data/
+
+# Misc
+*.log
+tmp/
+temp/
