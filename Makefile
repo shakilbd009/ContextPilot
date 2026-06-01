@@ -1,4 +1,4 @@
-.PHONY: help sync-check eval-arch eval eval-e2e eval-integration eval-security eval-perf dev docker-up docker-down lint fmt clean migrate seed-dev doctor demo-check check-pipeline-gates check-orchestrator-pipeline check-brd-open-items
+.PHONY: help sync-check eval-arch eval eval-e2e eval-integration eval-security eval-perf dev docker-up docker-down lint fmt clean migrate seed-dev doctor demo-check check-pipeline-gates check-orchestrator-pipeline check-brd-open-items ci-local ci-e2e ci-security
 
 # ──────────────────────────────────────────
 # Colors
@@ -50,6 +50,12 @@ help: ## Show all available targets
 	@echo "=== Meta ==="
 	@echo "  make demo-check     Confirm local app/demo readiness"
 	@echo "  make migrate        Run DB migrations (Phase 1+)"
+	@echo ""
+	@echo "=== CI Mirror (dry-run what .github/workflows/eval.yml runs) ==="
+	@echo "  make ci-local       Run all blocking CI gates locally (arch + sync + backend + frontend; e2e on)"
+	@echo "  make ci-local-skip-e2e  Same as ci-local but skip the heavy E2E gate"
+	@echo "  make ci-e2e         Run the E2E job locally (docker compose up + playwright)"
+	@echo "  make ci-security    Run the security job locally (installs gosec, blocking)"
 
 # ──────────────────────────────────────────
 # Governance
@@ -125,23 +131,22 @@ eval-backend: ## Run backend tests/vet (blocking)
 	@if [ ! -d "backend" ] || [ ! -f "backend/go.mod" ]; then \
 		echo "SKIP: backend not scaffolded yet"; \
 	else \
-		cd backend && go test ./... || exit 1; \
-		cd backend && go vet ./... || exit 1; \
+		cd backend && go test ./... && go vet ./... || exit 1; \
 	fi
 
 eval-frontend: ## Run frontend typecheck/build (blocking)
 	@if [ ! -d "frontend" ] || [ ! -f "frontend/package.json" ]; then \
 		echo "SKIP: frontend not scaffolded yet"; \
 	else \
-		cd frontend && pnpm exec svelte-check --tsconfig ./tsconfig.json || exit 1; \
-		cd frontend && pnpm build || exit 1; \
+		cd frontend && pnpm exec svelte-check --tsconfig ./tsconfig.json && pnpm build || exit 1; \
 	fi
 
-eval-e2e: ## Run E2E scenarios (Phase 1+)
+eval-e2e: ## Run E2E scenarios (Phase 1+, BLOCKING — fails on any test failure)
 	@if [ ! -d "frontend" ] || [ -z "$$(find frontend -name '*.ts' -type f 2>/dev/null)" ]; then \
 		echo "SKIP: frontend not scaffolded yet (Phase 1)"; \
 	else \
-		cd frontend && pnpm exec playwright test --reporter=list || true; \
+		echo "Running Playwright E2E (blocking — exit 1 on failure)..."; \
+		cd frontend && pnpm exec playwright test --reporter=list; \
 	fi
 
 eval-integration: ## Run integration tests (Phase 1+)
@@ -218,3 +223,21 @@ demo-check: ## Confirm local app/demo readiness
 		echo "FAIL: neither 'docker compose' nor 'docker-compose' can validate config"; \
 		exit 1; \
 	fi
+
+# ──────────────────────────────────────────
+# CI mirror targets
+# These are the local equivalent of the .github/workflows/eval.yml jobs.
+# `ci-local` is the umbrella: it runs every blocking gate the CI workflow
+# enforces. Heavy gates (E2E) can be skipped with `ci-local-skip-e2e`.
+# ──────────────────────────────────────────
+ci-local: ## Run all blocking CI gates locally (mirrors .github/workflows/eval.yml)
+	@bash scripts/ci-local-dry-run.sh
+
+ci-local-skip-e2e: ## Run blocking CI gates except E2E
+	@bash scripts/ci-local-dry-run.sh --skip-e2e
+
+ci-e2e: ## Run the E2E job locally (mirrors CI: jobs.e2e)
+	@bash scripts/ci-e2e.sh
+
+ci-security: ## Run the security job locally (mirrors CI: jobs.security)
+	@bash scripts/ci-security.sh
