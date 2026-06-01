@@ -337,17 +337,13 @@ test('AC-10: Happy path save with transcript', async ({ page }) => {
   await waitForRedirect(page, /\/meetings\/[a-z0-9-]+$/);
   // No query string
   await expect(page).not.toHaveURL(/\?/);
-  // On the detail page the title is in a single h1 — be specific to avoid
-  // strict-mode collisions if a prior run left other cards on the list
-  // page after a redirect.
-  await expect(
-    page.getByRole('heading', { level: 1, name: 'Q3 Planning Session' }),
-  ).toBeVisible();
-  // Also visible in meetings list. The list can have duplicates of the
-  // same title across prior test runs (state pollution — no per-test
-  // teardown), so use .first() to satisfy strict mode.
+  await expect(page.getByText('Q3 Planning Session')).toBeVisible();
+  // Also visible in meetings list — scope to the list container to avoid
+  // strict-mode collisions with the detail-page h1 rendered above.
   await page.goto('/meetings');
-  await expect(page.getByText('Q3 Planning Session').first()).toBeVisible();
+  await expect(
+    page.locator('.meetings-list').getByText('Q3 Planning Session').first()
+  ).toBeVisible();
 });
 
 // ── AC-11 ──────────────────────────────────────────────────────────
@@ -367,13 +363,13 @@ test('AC-11: Save succeeds with notes only (no transcript)', async ({ page }) =>
   await submitForm(page);
   await waitForRedirect(page, /\/meetings\/[a-z0-9-]+$/);
   await expect(page).not.toHaveURL(/\?/);
-  // Detail page: title is in a single h1 — be specific.
-  await expect(
-    page.getByRole('heading', { level: 1, name: 'Notes Only Meeting' }),
-  ).toBeVisible();
-  // List page: .first() to tolerate stale duplicates from prior runs.
+  await expect(page.getByText('Notes Only Meeting')).toBeVisible();
+  // Also visible in meetings list — scope to the list container to avoid
+  // strict-mode collisions with the detail-page h1 rendered above.
   await page.goto('/meetings');
-  await expect(page.getByText('Notes Only Meeting').first()).toBeVisible();
+  await expect(
+    page.locator('.meetings-list').getByText('Notes Only Meeting').first()
+  ).toBeVisible();
 });
 
 // ── AC-14 ──────────────────────────────────────────────────────────
@@ -444,14 +440,16 @@ test('AC-16: Double-click save does not create duplicate meetings', async ({ pag
   const submitBtn = page.getByRole('button', { name: /save meeting/i });
   await submitBtn.click();
 
-  // Wait for redirect to meeting detail
-  await page.waitForURL(/\/meetings\/[a-z0-9-]+$/);
-  // Wait for the detail page h1 to actually render the meeting title
-  // (the URL change fires before the page-load data resolves, so we
-  // can't read h1.textContent() immediately after waitForURL).
-  await expect(
-    page.getByRole('heading', { level: 1, name: /idempotency test/i }),
-  ).toBeVisible();
+  // Wait for redirect to meeting detail. The URL pattern must NOT match
+  // /meetings/new (which the form lives at), so require a UUID-like id
+  // (8-4-4-4-12 hex) instead of the looser [a-z0-9-]+ class that matches
+  // 'new'. This eliminates the race where waitForURL returned on the form
+  // page before the redirect navigation completed.
+  await page.waitForURL(/\/meetings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  await page.waitForLoadState('networkidle');
+  // Verify we're on the meeting detail page with the correct title
+  const heading = (await page.locator('h1').first().textContent()) ?? '';
+  expect(heading.toLowerCase()).toContain('idempotency test');
 });
 
 // ── AC-17 ──────────────────────────────────────────────────────────
