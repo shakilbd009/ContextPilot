@@ -48,12 +48,12 @@ function futureDate(daysFromNow = 1, hour = 14, minute = 0): { date: string; tim
 async function fillDateInput(page: Page, value: string) {
   const input = page.locator('input[type="date"]');
   await input.waitFor({ state: 'visible' });
-  await input.evaluate((el) => {
+  await input.evaluate((el, val) => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    setter?.call(el, value);
+    setter?.call(el, val);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+  }, value);
   await page.waitForTimeout(200);
 }
 
@@ -338,9 +338,12 @@ test('AC-10: Happy path save with transcript', async ({ page }) => {
   // No query string
   await expect(page).not.toHaveURL(/\?/);
   await expect(page.getByText('Q3 Planning Session')).toBeVisible();
-  // Also visible in meetings list
+  // Also visible in meetings list — scope to the list container to avoid
+  // strict-mode collisions with the detail-page h1 rendered above.
   await page.goto('/meetings');
-  await expect(page.getByText('Q3 Planning Session')).toBeVisible();
+  await expect(
+    page.locator('.meetings-list').getByText('Q3 Planning Session').first()
+  ).toBeVisible();
 });
 
 // ── AC-11 ──────────────────────────────────────────────────────────
@@ -361,8 +364,12 @@ test('AC-11: Save succeeds with notes only (no transcript)', async ({ page }) =>
   await waitForRedirect(page, /\/meetings\/[a-z0-9-]+$/);
   await expect(page).not.toHaveURL(/\?/);
   await expect(page.getByText('Notes Only Meeting')).toBeVisible();
+  // Also visible in meetings list — scope to the list container to avoid
+  // strict-mode collisions with the detail-page h1 rendered above.
   await page.goto('/meetings');
-  await expect(page.getByText('Notes Only Meeting')).toBeVisible();
+  await expect(
+    page.locator('.meetings-list').getByText('Notes Only Meeting').first()
+  ).toBeVisible();
 });
 
 // ── AC-14 ──────────────────────────────────────────────────────────
@@ -433,8 +440,13 @@ test('AC-16: Double-click save does not create duplicate meetings', async ({ pag
   const submitBtn = page.getByRole('button', { name: /save meeting/i });
   await submitBtn.click();
 
-  // Wait for redirect to meeting detail
-  await page.waitForURL(/\/meetings\/[a-z0-9-]+$/);
+  // Wait for redirect to meeting detail. The URL pattern must NOT match
+  // /meetings/new (which the form lives at), so require a UUID-like id
+  // (8-4-4-4-12 hex) instead of the looser [a-z0-9-]+ class that matches
+  // 'new'. This eliminates the race where waitForURL returned on the form
+  // page before the redirect navigation completed.
+  await page.waitForURL(/\/meetings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  await page.waitForLoadState('networkidle');
   // Verify we're on the meeting detail page with the correct title
   const heading = (await page.locator('h1').first().textContent()) ?? '';
   expect(heading.toLowerCase()).toContain('idempotency test');
