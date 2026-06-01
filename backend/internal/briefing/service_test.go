@@ -36,7 +36,7 @@ type mockPoolForBriefing struct {
 }
 
 func (p *mockPoolForBriefing) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	return nil, nil
+	return &mockRowsForBriefing{}, nil
 }
 func (p *mockPoolForBriefing) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	return &mockRowForBriefing{err: p.upcomingErr, meeting: p.upcomingMeeting}
@@ -95,6 +95,23 @@ func (r *mockRowForBriefing) Scan(dest ...any) error {
 	r.scanned = true
 	return nil
 }
+
+// mockRowsForBriefing implements pgx.Rows for participant queries in briefing tests.
+type mockRowsForBriefing struct {
+	closed bool
+}
+
+func (r *mockRowsForBriefing) Close()                      { r.closed = true }
+func (r *mockRowsForBriefing) CommandTag() pgconn.CommandTag { return pgconn.CommandTag{} }
+func (r *mockRowsForBriefing) Err() error                  { return nil }
+func (r *mockRowsForBriefing) Next() bool                   { return false }
+func (r *mockRowsForBriefing) Scan(dest ...any) error       { return nil }
+func (r *mockRowsForBriefing) Values() ([]any, error)       { return nil, nil }
+func (r *mockRowsForBriefing) RawValues() [][]uint8         { return nil }
+func (r *mockRowsForBriefing) FieldDescriptions() []pgconn.FieldDescription {
+	return nil
+}
+func (r *mockRowsForBriefing) Conn() *pgx.Conn { return nil }
 
 type mockTxForBriefing struct{}
 

@@ -4,10 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/rs/zerolog"
 )
 
 // Tests for HTTP response helpers
@@ -241,5 +246,179 @@ func TestBriefingResponse_JSON(t *testing.T) {
 		t.Error("Content = nil, want non-nil")
 	} else if decoded.Content.ConciseSummary.Objective != "Test objective" {
 		t.Errorf("Content.ConciseSummary.Objective = %q, want %q", decoded.Content.ConciseSummary.Objective, "Test objective")
+	}
+}
+
+// ─── FF-guard regression tests ────────────────────────────────────────────────
+// These tests prove the briefing feature-flag guard middleware actually fires
+// for briefing routes. Prior to this fix the routes were registered on the
+// outer chi router (r.Get/Post) instead of the FF-guarded group (g.Get/Post),
+// so the guard never executed and the production contract — "when
+// FF_ENABLE_PRE_CALL_BRIEFING=false the server returns 403" — was silently
+// violated. The tests below would have failed with the bug in place: the
+// disabled-flag request would have reached the underlying handler (which then
+// either 200s, 401s on missing X-User-ID, or 500s on nil pool) instead of 403.
+
+// briefingFFDisabledRoutes enumerates every route the FF guard must cover.
+// Each entry is a (method, path) pair. Path templating uses chi-style {param}
+// — we substitute valid UUIDs before serving the request.
+var briefingFFDisabledRoutes = []struct {
+	name   string
+	method string
+	path   string
+}{
+	{"GetBriefing", http.MethodGet, "/upcoming/{mid}/briefing"},
+	{"ListVersions", http.MethodGet, "/upcoming/{mid}/briefing/versions"},
+	{"GetVersion", http.MethodGet, "/upcoming/{mid}/briefing/versions/{n}"},
+	{"Regenerate", http.MethodPost, "/upcoming/{mid}/briefing/regenerate"},
+	{"GetSources", http.MethodGet, "/upcoming/{mid}/briefing/sources"},
+	{"ExcludeSource", http.MethodPost, "/upcoming/{mid}/briefing/sources/{sid}/exclude"},
+	{"RestoreSource", http.MethodPost, "/upcoming/{mid}/briefing/sources/{sid}/restore"},
+}
+
+func substituteBriefingPathParams(t *testing.T, tmpl string) string {
+	t.Helper()
+	mid := uuid.New().String()
+	sid := uuid.New().String()
+	out := strings.ReplaceAll(tmpl, "{mid}", mid)
+	out = strings.ReplaceAll(out, "{sid}", sid)
+	out = strings.ReplaceAll(out, "{n}", "1")
+	return out
+}
+
+// buildBriefingRouter builds the production handler with a nil pool/worker.
+// The FF guard must short-circuit before any pool/worker call, so passing
+// nil is safe for the disabled-flag tests.
+func buildBriefingRouter(t *testing.T) http.Handler {
+	t.Helper()
+	// Silence logger output during tests.
+	logger := zerolog.New(os.Stdout).Level(zerolog.Disabled)
+	return Handler(&logger, nil, nil)
+}
+
+func TestHandler_FeatureFlagDisabled_AllRoutes(t *testing.T) {
+	// Production default: feature flag unset (or explicitly false). Either
+	// way the guard must fire and return 403. t.Setenv handles cleanup.
+	t.Setenv(FeatureFlagEnv, "false")
+	// Sanity: the FF helper itself must report disabled for this test to be
+	// meaningful. If this assertion fails, the test setup is broken and the
+	// regression coverage is meaningless.
+	if IsFeatureFlagEnabled() {
+		t.Fatalf("IsFeatureFlagEnabled() = true with env=%q; test setup is broken", "false")
+	}
+
+	router := buildBriefingRouter(t)
+
+	for _, tc := range briefingFFDisabledRoutes {
+		t.Run(tc.name, func(t *testing.T) {
+			path := substituteBriefingPathParams(t, tc.path)
+			req := httptest.NewRequest(tc.method, path, nil)
+			// Even with a valid X-User-ID the guard must short-circuit
+			// before user/auth checks. Include a UUID to prove the guard
+			// fires regardless of auth state.
+			req.Header.Set("X-User-ID", uuid.New().String())
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want %d (FF guard did not fire for %s %s)",
+					w.Code, http.StatusForbidden, tc.method, tc.path)
+			}
+			body := w.Body.String()
+			if !strings.Contains(body, "Pre-call briefing is not enabled") {
+				t.Errorf("body = %q, want to contain %q", body, "Pre-call briefing is not enabled")
+			}
+			// Content-Type must be the problem+json envelope used elsewhere
+			// in this package — guards against silent response-shape changes.
+			if ct := w.Header().Get("Content-Type"); ct != "application/problem+json" {
+				t.Errorf("Content-Type = %q, want %q", ct, "application/problem+json")
+			}
+		})
+	}
+}
+
+func TestHandler_FeatureFlagDisabled_UnsetEnv(t *testing.T) {
+	// Production default: env var unset. The FF helper treats unset the same
+	// as "false". Without the routing fix, requests on this code path would
+	// bypass the guard and reach the handlers (which would then 500 on the
+	// nil pool we pass). The guard must fire and return 403.
+	// Note: t.Setenv("") explicitly sets it to empty rather than unsetting,
+	// which is functionally equivalent for IsFeatureFlagEnabled (both yield
+	// "false"). We use t.Setenv with the empty string so the test does not
+	// depend on the host's actual env state.
+	t.Setenv(FeatureFlagEnv, "")
+
+	router := buildBriefingRouter(t)
+	meetingID := uuid.New().String()
+	req := httptest.NewRequest(http.MethodGet, "/upcoming/"+meetingID+"/briefing", nil)
+	req.Header.Set("X-User-ID", uuid.New().String())
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (FF guard must fire when env is unset)",
+			w.Code, http.StatusForbidden)
+	}
+	if !strings.Contains(w.Body.String(), "Pre-call briefing is not enabled") {
+		t.Errorf("body = %q, want to contain %q", w.Body.String(), "Pre-call briefing is not enabled")
+	}
+}
+
+// TestHandler_FlagMismatch_MetricEmitted proves the FF-guard middleware
+// increments FlagMisconfigurationTotal when the browser header disagrees
+// with the server-side env var. This is the production observability
+// signal that catches "browser thinks feature is on, server says off"
+// misconfigurations before users start seeing 403s in the wild.
+//
+// The test uses a custom prometheus.Registry so the promauto-registered
+// metric is observable via testutil. The delta-before/after assertion
+// keeps the test stable even when other tests in the package have
+// already touched the same counter.
+func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
+	// Swap prometheus.DefaultRegisterer to a private registry so the
+	// metric in this test starts from a clean slate for the labels
+	// we care about. Restore the original at the end.
+	origReg := prometheus.DefaultRegisterer
+	reg := prometheus.NewRegistry()
+	prometheus.DefaultRegisterer = reg
+	t.Cleanup(func() { prometheus.DefaultRegisterer = origReg })
+
+	// Server says feature is OFF. Browser claims it's ON.
+	t.Setenv(FeatureFlagEnv, "false")
+
+	logger := zerolog.New(os.Stdout).Level(zerolog.Disabled)
+	router := Handler(&logger, nil, nil)
+
+	meetingID := uuid.New().String()
+	req := httptest.NewRequest(http.MethodGet, "/upcoming/"+meetingID+"/briefing", nil)
+	req.Header.Set("X-User-ID", uuid.New().String())
+	req.Header.Set("X-Browser-FF-Pre-Call-Briefing", "true")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Guard must still short-circuit with 403 even when the browser
+	// header is present.
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (FF guard must still fire on mismatch)",
+			w.Code, http.StatusForbidden)
+	}
+
+	// Metric must be incremented. Labels match emitFlagMisconfiguration
+	// signature: (server_flag_value, browser_flag_value, endpoint).
+	const serverVal, browserVal, endpoint = "false", "true", "briefing_endpoint"
+	before := testutil.ToFloat64(FlagMisconfigurationTotal.WithLabelValues(serverVal, browserVal, endpoint))
+	// Re-issue the request to capture the increment delta — the previous
+	// call already incremented once (we can't observe "before" retroactively
+	// for a request that already fired). Take a second request.
+	req2 := httptest.NewRequest(http.MethodGet, "/upcoming/"+uuid.New().String()+"/briefing", nil)
+	req2.Header.Set("X-User-ID", uuid.New().String())
+	req2.Header.Set("X-Browser-FF-Pre-Call-Briefing", "true")
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	after := testutil.ToFloat64(FlagMisconfigurationTotal.WithLabelValues(serverVal, browserVal, endpoint))
+
+	if after-before != 1 {
+		t.Errorf("FlagMisconfigurationTotal delta = %v, want 1 (before=%v after=%v)",
+			after-before, before, after)
 	}
 }

@@ -12,17 +12,17 @@
   let { conflicts, onResolve, onResolveConflict }: Props = $props();
 
   // Prefer onResolveConflict if provided, otherwise fall back to onResolve
-  const handleResolve = onResolveConflict ?? onResolve;
+  let handleResolve = $derived(onResolveConflict ?? onResolve);
 
   let resolutions = $state<Record<string, string>>({});
   let submitting = $state<Set<string>>(new Set());
 
-  async function handleResolve(conflictId: string) {
+  async function _handleResolve(conflictId: string) {
     const note = resolutions[conflictId]?.trim() ?? '';
     submitting.add(conflictId);
     submitting = new Set(submitting);
     try {
-      await onResolve(conflictId, note);
+      await handleResolve(conflictId, note);
       delete resolutions[conflictId];
       resolutions = { ...resolutions };
     } finally {
@@ -84,7 +84,7 @@
             size="sm"
             loading={isSubmitting}
             disabled={!note.trim()}
-            onclick={() => handleResolve(conflict.id)}
+            onclick={() => _handleResolve(conflict.id)}
           >
             Mark reviewed
           </Button>

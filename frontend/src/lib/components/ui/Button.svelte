@@ -8,7 +8,10 @@
     disabled?: boolean;
     loading?: boolean;
     class?: string;
+    'aria-label'?: string;
     onclick?: (e: MouseEvent) => void;
+    'aria-pressed'?: boolean | 'true' | 'false';
+    'aria-current'?: boolean | 'true' | 'false' | null;
     children: Snippet;
   }
 
@@ -19,7 +22,10 @@
     disabled = false,
     loading = false,
     class: className = '',
+    'aria-label': ariaLabel = undefined,
     onclick,
+    'aria-pressed': ariaPressed = undefined,
+    'aria-current': ariaCurrent = undefined,
     children,
   }: Props = $props();
 
@@ -33,6 +39,9 @@
   class="{baseClass} {variantClass} {sizeClass} {className}"
   disabled={disabled || loading}
   aria-busy={loading}
+  aria-label={ariaLabel}
+  aria-pressed={ariaPressed}
+  aria-current={ariaCurrent}
   onclick={disabled || loading ? undefined : onclick}
 >
   {#if loading}

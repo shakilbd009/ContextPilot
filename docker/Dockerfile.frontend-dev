@@ -1,7 +1,11 @@
 # Frontend dev — hot-reload capable
 FROM node:22-alpine
 
-RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
+# Pin pnpm to the project-declared version (AGENTS.md / Makefile use 10.32.1).
+# Mismatched pnpm major versions produce different .pnpm/<hash>/ directory names,
+# which breaks Vite path resolution when the host's .svelte-kit/ is bind-mounted
+# into the container. Keep this in sync with frontend/.npmrc and the Makefile.
+RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
 
 WORKDIR /app
 

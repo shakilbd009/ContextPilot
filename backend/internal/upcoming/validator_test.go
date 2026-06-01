@@ -46,7 +46,7 @@ func TestValidateCreate_Title(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ValidateCreate(tt.input)
+			result := ValidateCreate(tt.input, time.Now())
 			if tt.wantErr {
 				if !result.HasErrors() {
 					t.Fatalf("expected errors, got none")
@@ -73,7 +73,12 @@ func TestValidateCreate_Title(t *testing.T) {
 }
 
 func TestValidateCreate_ScheduledStart(t *testing.T) {
-	now := time.Now()
+	// Truncate to second precision: the validator parses ScheduledStart with
+	// time.RFC3339, which discards sub-second components. Pinning `now` to
+	// the same precision prevents the validator's "now" from being a few
+	// nanoseconds later than the formatted input's reference, which would
+	// make the exactly-15-minutes case spuriously fail.
+	now := time.Now().Truncate(time.Second)
 	tests := []struct {
 		name     string
 		input    CreateUpcomingMeetingInput
@@ -144,7 +149,11 @@ func TestValidateCreate_ScheduledStart(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ValidateCreate(tt.input)
+			// Use the `now` captured at table construction so the 15-minute
+			// boundary check is deterministic. Without this, the validator's
+			// own time.Now() call would drift past `now + 15min` and the
+			// exactly-15-minutes case would fail intermittently.
+			result := ValidateCreate(tt.input, now)
 			if tt.wantErr {
 				if !result.HasErrors() {
 					t.Fatalf("expected errors, got none")
@@ -264,7 +273,7 @@ func TestValidateCreate_Participants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ValidateCreate(tt.input)
+			result := ValidateCreate(tt.input, time.Now())
 			if tt.wantErr {
 				if !result.HasErrors() {
 					t.Fatalf("expected errors, got none")
@@ -298,7 +307,7 @@ func TestValidateCreate_TooManyParticipants(t *testing.T) {
 		Title:          "Meeting",
 		ScheduledStart: future,
 		Participants:   participants,
-	})
+	}, time.Now())
 
 	if !result.HasErrors() {
 		t.Fatal("expected too_many_participants error, got none")
@@ -323,7 +332,7 @@ func TestValidateCreate_FormEcho(t *testing.T) {
 		ClientOrOrganization: ptr("Acme"),
 		Participants:         []ParticipantInput{{DisplayName: ptr("Alice"), Email: ptr("alice@example.com")}},
 	}
-	result := ValidateCreate(in)
+	result := ValidateCreate(in, time.Now())
 	if !result.HasErrors() {
 		t.Fatal("expected validation errors")
 	}

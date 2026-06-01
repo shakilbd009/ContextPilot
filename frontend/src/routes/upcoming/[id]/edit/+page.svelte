@@ -32,13 +32,13 @@
   let timeRemaining = $state<number | null>(null);
 
   // ── Edit-window countdown (FR-9) ─────────────────────────────
-  const editWindowRemaining = $derived(() => {
+  const editWindowRemaining = $derived.by(() => {
     if (!meeting) return null;
     const deadline = new Date(new Date(meeting.scheduledStart).getTime() + 15 * 60 * 1000);
     return Math.max(0, deadline.getTime() - Date.now());
   });
 
-  const isEditable = $derived(() => editWindowRemaining() > 0);
+  const isEditable = $derived(editWindowRemaining !== null && editWindowRemaining > 0);
 
   // Live countdown tick
   $effect(() => {
@@ -46,9 +46,9 @@
       timeRemaining = null;
       return;
     }
-    timeRemaining = editWindowRemaining();
+    timeRemaining = editWindowRemaining;
     const id = setInterval(() => {
-      timeRemaining = editWindowRemaining();
+      timeRemaining = editWindowRemaining;
       if (timeRemaining === 0) clearInterval(id);
     }, 1000);
     return () => clearInterval(id);
@@ -123,7 +123,7 @@
       participants: participants
         .filter(p => p.displayName.trim() || p.email.trim())
         .map(p => ({
-          displayName: p.displayName.trim() || undefined,
+          displayName: p.displayName.trim(),
           email: p.email.trim() || undefined,
           organization: p.organization.trim() || undefined,
         })),
@@ -195,7 +195,7 @@
     <Alert variant="error">Meeting not found.</Alert>
     <Button variant="ghost" onclick={() => goto('/upcoming')}>← Back to upcoming meetings</Button>
   </div>
-{:else if meeting && !isEditable()}
+{:else if meeting && !isEditable}
   <div class="page-container">
     <Alert variant="warning">
       Edit window has passed. This meeting is now read-only.

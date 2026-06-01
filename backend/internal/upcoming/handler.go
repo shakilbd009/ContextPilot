@@ -22,7 +22,7 @@ import (
 const featureFlagEnv = "FF_ENABLE_UPCOMING_MEETINGS"
 
 type contextKey struct{}
-type poolKey struct{}
+type poolKey     struct{}
 
 // WithRepository injects the upcoming repository into the request context.
 func WithRepository(pool *pgxpool.Pool) func(http.Handler) http.Handler {
@@ -73,11 +73,20 @@ func getUserID(r *http.Request) (uuid.UUID, bool) {
 	return id, true
 }
 
-func isFeatureFlagEnabled() bool {
+func isFeatureFlagEnabled(ctx context.Context) bool {
+	if testFFValue != "" {
+		part := strings.SplitN(testFFValue, ",", 2)[0]
+		return strings.ToLower(part) == "true"
+	}
 	v := strings.TrimSpace(os.Getenv(featureFlagEnv))
 	part := strings.SplitN(v, ",", 2)[0]
 	return strings.ToLower(part) == "true"
 }
+
+// testFFValue is a package-level override for testing only.
+// It is set by buildTestRouter and read by isFeatureFlagEnabled
+// to bypass the deferred os.Setenv restore timing issue.
+var testFFValue string
 
 // hashID returns the first 16 hex chars of SHA-256 of the stringified UUID.
 // Used for privacy-safe log correlation (FR-20).
@@ -100,7 +109,7 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
 	r.Group(func(g chi.Router) {
 		g.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !isFeatureFlagEnabled() {
+				if !isFeatureFlagEnabled(r.Context()) {
 					// Emit flag mismatch metric: frontend is attempting to use the feature
 					// while the backend flag is disabled.
 					FlagMismatchTotal.WithLabelValues("upcoming_meetings", "frontend-disabled", "feature_disabled").Inc()
@@ -122,11 +131,11 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
 			})
 		})
 
-		r.Post("/", handleCreateUpcomingMeeting(log))
-		r.Get("/", handleListUpcomingMeetings(log))
-		r.Get("/{id}", handleGetUpcomingMeeting(log))
-		r.Patch("/{id}", handleUpdateUpcomingMeeting(log))
-		r.Post("/{id}/cancel", handleCancelUpcomingMeeting(log))
+		g.Post("/", handleCreateUpcomingMeeting(log))
+		g.Get("/", handleListUpcomingMeetings(log))
+		g.Get("/{id}", handleGetUpcomingMeeting(log))
+		g.Patch("/{id}", handleUpdateUpcomingMeeting(log))
+		g.Post("/{id}/cancel", handleCancelUpcomingMeeting(log))
 	})
 
 	return r
@@ -160,7 +169,7 @@ func handleCreateUpcomingMeeting(log *zerolog.Logger) http.HandlerFunc {
 		hasParticipants := len(in.Participants) > 0
 		CreateRequestedTotal.WithLabelValues(source, strconv.FormatBool(hasParticipants)).Inc()
 
-		validation := ValidateCreate(in)
+		validation := ValidateCreate(in, time.Now())
 		if validation.HasErrors() {
 			for _, fe := range validation.Errors {
 				ValidationFailedTotal.WithLabelValues(fe.Code).Inc()

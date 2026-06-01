@@ -25,7 +25,7 @@
  * The app redirects unauthenticated users to /login before showing any protected content.
  */
 
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -48,16 +48,12 @@ function futureDate(daysFromNow = 1, hour = 14, minute = 0): { date: string; tim
 async function fillDateInput(page: Page, value: string) {
   const input = page.locator('input[type="date"]');
   await input.waitFor({ state: 'visible' });
-  const el = await input.elementHandle();
-  await page.evaluate(
-    ({ el, value }) => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter?.call(el, value);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    },
-    { el, value }
-  );
+  await input.evaluate((el) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   await page.waitForTimeout(200);
 }
 
@@ -440,7 +436,7 @@ test('AC-16: Double-click save does not create duplicate meetings', async ({ pag
   // Wait for redirect to meeting detail
   await page.waitForURL(/\/meetings\/[a-z0-9-]+$/);
   // Verify we're on the meeting detail page with the correct title
-  const heading = page.locator('h1').first().textContent() ?? '';
+  const heading = (await page.locator('h1').first().textContent()) ?? '';
   expect(heading.toLowerCase()).toContain('idempotency test');
 });
 

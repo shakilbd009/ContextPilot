@@ -13,6 +13,11 @@
 
 # Build outputs
 backend/bin/
+backend/server
+backend/contextpilot-server
+backend/briefing.test
+backend/*.test
+backend/cover.out
 frontend/.svelte-kit/
 frontend/build/
 frontend/node_modules/
@@ -22,6 +27,8 @@ frontend/.vercel/
 coverage/
 *.cover
 *.out
+frontend/test-results/
+frontend/playwright-report/
 
 # Docker
 docker/data/

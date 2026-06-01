@@ -1,27 +1,34 @@
 import { render, screen, fireEvent } from '@testing-library/svelte';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import type { Snippet } from 'svelte';
 import Drawer from './Drawer.svelte';
+
+// Snippet helper: components declare `children: Snippet` but Svelte 5's
+// unique-symbol return type can't be expressed from a plain function literal.
+// Cast through `unknown` to bridge the gap (runtime works correctly).
+const children = (text: string | null = null): Snippet =>
+	(() => text) as unknown as Snippet;
 
 describe('Drawer', () => {
 	it('does not render when open is false', () => {
-		render(Drawer, { open: false, onclose: () => {} });
+		render(Drawer, { open: false, onclose: () => {}, children: children() });
 		expect(document.querySelector('.drawer')).not.toBeInTheDocument();
 		expect(document.querySelector('.drawer-backdrop')).not.toBeInTheDocument();
 	});
 
 	it('renders when open is true', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, children: children() });
 		expect(document.querySelector('.drawer')).toBeInTheDocument();
 	});
 
 	it('renders backdrop when open', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, children: children() });
 		expect(document.querySelector('.drawer-backdrop')).toBeInTheDocument();
 	});
 
 	it('calls onclose when backdrop is clicked', async () => {
 		const handler = vi.fn();
-		render(Drawer, { open: true, onclose: handler, children: () => {} });
+		render(Drawer, { open: true, onclose: handler, children: children() });
 		const backdrop = document.querySelector('.drawer-backdrop') as HTMLDivElement;
 		await fireEvent.click(backdrop);
 		expect(handler).toHaveBeenCalledTimes(1);
@@ -29,7 +36,7 @@ describe('Drawer', () => {
 
 	it('calls onclose when close button is clicked', async () => {
 		const handler = vi.fn();
-		render(Drawer, { open: true, onclose: handler, children: () => {} });
+		render(Drawer, { open: true, onclose: handler, children: children() });
 		const closeBtn = document.querySelector('.drawer__close') as HTMLButtonElement;
 		await fireEvent.click(closeBtn);
 		expect(handler).toHaveBeenCalledTimes(1);
@@ -37,51 +44,51 @@ describe('Drawer', () => {
 
 	it('closes on Escape key', async () => {
 		const handler = vi.fn();
-		render(Drawer, { open: true, onclose: handler, children: () => {} });
+		render(Drawer, { open: true, onclose: handler, children: children() });
 		await fireEvent(document, new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 		expect(handler).toHaveBeenCalledTimes(1);
 	});
 
 	it('has role dialog', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, children: children() });
 		expect(document.querySelector('[role="dialog"]')).toBeInTheDocument();
 	});
 
 	it('has aria-modal true', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, children: children() });
 		expect(document.querySelector('[role="dialog"]')).toHaveAttribute('aria-modal', 'true');
 	});
 
 	it('has aria-label on dialog', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, children: children() });
 		expect(document.querySelector('[role="dialog"]')).toHaveAttribute('aria-label', 'Navigation menu');
 	});
 
 	it('renders with custom id', () => {
-		render(Drawer, { open: true, onclose: () => {}, id: 'my-drawer', children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, id: 'my-drawer', children: children() });
 		expect(document.querySelector('#my-drawer')).toBeInTheDocument();
 	});
 
 	it('renders children content', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => 'Drawer content' });
+		render(Drawer, { open: true, onclose: () => {}, children: children('Drawer content') });
 		const nav = document.querySelector('.drawer__nav');
 		expect(nav).toBeInTheDocument();
 	});
 
 	it('has close button with aria-label', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, children: children() });
 		const closeBtn = document.querySelector('.drawer__close');
 		expect(closeBtn).toHaveAttribute('aria-label', 'Close menu');
 	});
 
 	it('has nav with aria-label', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, children: children() });
 		const nav = document.querySelector('[aria-label="Main navigation"]');
 		expect(nav).toBeInTheDocument();
 	});
 
 	it('renders drawer header with title', () => {
-		render(Drawer, { open: true, onclose: () => {}, children: () => {} });
+		render(Drawer, { open: true, onclose: () => {}, children: children() });
 		expect(screen.getByText('Menu')).toBeInTheDocument();
 	});
 });

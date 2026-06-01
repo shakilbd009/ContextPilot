@@ -1,9 +1,10 @@
 /// <reference types="vitest" />
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { svelteTesting } from '@testing-library/svelte/vite';
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [sveltekit(), svelteTesting()],
 	server: {
 		proxy: {
 			'/api': {
@@ -13,6 +14,7 @@ export default defineConfig({
 			},
 		},
 	},
+	// @ts-expect-error — test block is recognized by vitest (via the triple-slash reference above) but not by Vite's UserConfigExport type
 	test: {
 		include: ['src/**/*.{test,spec}.{js,ts}'],
 		environment: 'jsdom',

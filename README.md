@@ -216,6 +216,23 @@ docker-compose logs postgres
 
 > **Reminder:** this environment uses `docker-compose` v1, not `docker compose` v2. If you copy commands from older docs or blog posts that say `docker compose`, they will fail (`docker: unknown command: docker compose`).
 
+### Playwright browser install (E2E)
+
+The E2E suite uses Playwright with Chromium. The `make ci-e2e` / `bash scripts/ci-e2e.sh` flow installs the browser automatically (idempotent — pnpm is a no-op if cached). If you need to install it by hand:
+
+```bash
+# macOS / Linux. The --with-deps flag installs OS-level libraries
+# (libnss, libatk, etc.) and requires sudo on Linux. On macOS only the
+# browser binary itself is downloaded; system deps are bundled.
+cd frontend
+pnpm install --frozen-lockfile
+pnpm exec playwright install --with-deps chromium
+```
+
+Chromium is cached at `~/Library/Caches/ms-playwright/chromium-XXXX/` on macOS and `~/.cache/ms-playwright/chromium-XXXX/` on Linux. The cache is shared across Hermes profiles — once installed in one profile, it is available to all of them.
+
+> **Frontend container pnpm version must match the host.** The dev Dockerfile pins `pnpm@10.32.1` to match `AGENTS.md` and the host toolchain. pnpm 9.x and pnpm 10.x produce different `.pnpm/<hash>/` directory names for the same packages, so a version mismatch causes Vite to fail with "Failed to load url .../node_modules/.pnpm/@sveltejs+kit@...". If you change the project pnpm version, update `docker/Dockerfile.frontend-dev` in the same commit.
+
 ### doctor.sh failures
 
 ```bash

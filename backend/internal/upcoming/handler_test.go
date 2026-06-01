@@ -23,31 +23,43 @@ import (
 
 // ─── Test Router Builder ─────────────────────────────────────────────────────
 
-func buildTestRouter(repo *Repository, pool Pool, ffValue string) http.Handler {
+// buildTestRouter builds a test router using the real Handler() with injected
+// mock repository/pool.  The FF value is set via the package-level testFFValue
+// variable so isFeatureFlagEnabled reads it directly without relying on env var
+// timing.  The env var is still set so Handler()'s internal registration is correct.
+//
+// t.Cleanup is installed to reset both the package-level testFFValue override
+// and the env var after the calling test finishes. This prevents the previous
+// test's FF value from leaking into any subsequent test (e.g. one that does
+// not call buildTestRouter, or one that runs in parallel via t.Parallel).
+func buildTestRouter(t *testing.T, repo *Repository, pool Pool, ffValue string) http.Handler {
+	t.Helper()
 	origFF := os.Getenv(featureFlagEnv)
-	defer os.Setenv(featureFlagEnv, origFF)
 	os.Setenv(featureFlagEnv, ffValue)
+	testFFValue = ffValue
+
+	t.Cleanup(func() {
+		testFFValue = ""
+		os.Setenv(featureFlagEnv, origFF)
+	})
 
 	logger := zerolog.New(os.Stdout).Level(zerolog.WarnLevel)
 
-	// Build the router first, THEN set up context injection, THEN return.
-	// The FF flag is read at Handler() call time (route registration), so we
-	// need to restore the original AFTER registering routes with the original
-	// value. Do NOT restore before returning — the returned handler was already
-	// registered under ffValue.
-	router := Handler(&logger, nil)
+	// Build the real handler with all routes and middleware.
+	realHandler := Handler(&logger, nil)
 
-	// Build a chi router with context injection wrapping the router above.
-	wrapped := chi.NewRouter()
-	wrapped.Use(func(next http.Handler) http.Handler {
+	// Wrap the real handler with context injection for repo and pool.
+	wrapper := chi.NewRouter()
+	wrapper.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := context.WithValue(r.Context(), contextKey{}, repo)
+			ctx := r.Context()
+			ctx = context.WithValue(ctx, contextKey{}, repo)
 			ctx = context.WithValue(ctx, poolKey{}, pool)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	})
-	wrapped.Mount("/", router)
-	return wrapped
+	wrapper.Mount("/", realHandler)
+	return wrapper
 }
 
 // mockPoolForHandler implements Pool interface for handler tests.
@@ -189,7 +201,7 @@ func (r *mockRowForHandler) Scan(dest ...any) error {
 
 func TestHandler_Create_Unauthenticated(t *testing.T) {
 	pool := &mockPoolForHandler{}
-	router := buildTestRouter(nil, pool, "true")
+	router := buildTestRouter(t, nil, pool, "true")
 
 	body := `{"title":"Test Meeting","scheduledStart":"` + time.Now().Add(2*time.Hour).Format(time.RFC3339) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))
@@ -205,7 +217,7 @@ func TestHandler_Create_Unauthenticated(t *testing.T) {
 
 func TestHandler_List_Unauthenticated(t *testing.T) {
 	pool := &mockPoolForHandler{}
-	router := buildTestRouter(nil, pool, "true")
+	router := buildTestRouter(t, nil, pool, "true")
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	// No X-User-ID header — intentionally omitted
@@ -221,7 +233,7 @@ func TestHandler_List_Unauthenticated(t *testing.T) {
 
 func TestHandler_FeatureFlagDisabled_Create(t *testing.T) {
 	pool := &mockPoolForHandler{}
-	router := buildTestRouter(nil, pool, "false")
+	router := buildTestRouter(t, nil, pool, "false")
 
 	body := `{"title":"Test","scheduledStart":"2025-06-01T10:00:00Z"}`
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))
@@ -253,7 +265,7 @@ func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
 	// Build the middleware function inline — same logic as Handler's router-level guard
 	middleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !isFeatureFlagEnabled() {
+			if !isFeatureFlagEnabled(r.Context()) {
 				FlagMismatchTotal.WithLabelValues("upcoming_meetings", "frontend-disabled", "feature_disabled").Inc()
 
 				userID, _ := getUserID(r)
@@ -282,16 +294,23 @@ func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
 
 	wrapped := middleware(dummyHandler)
 
+	// Capture baseline count before the action under test. The metric is a
+	// package-level Prometheus counter that is shared across tests in this
+	// package; other tests that hit the FF-disabled path will have already
+	// incremented it. We assert the delta, not the absolute value.
+	const flagName, direction, result = "upcoming_meetings", "frontend-disabled", "feature_disabled"
+	before := testutil.ToFloat64(FlagMismatchTotal.WithLabelValues(flagName, direction, result))
+
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set("X-User-ID", uuid.New().String())
 	w := httptest.NewRecorder()
 
 	wrapped.ServeHTTP(w, req)
 
-	// Verify metric was incremented
-	count := testutil.ToFloat64(FlagMismatchTotal.WithLabelValues("upcoming_meetings", "frontend-disabled", "feature_disabled"))
-	if count != 1 {
-		t.Errorf("FlagMismatchTotal = %v, want 1", count)
+	// Verify metric was incremented by exactly 1.
+	after := testutil.ToFloat64(FlagMismatchTotal.WithLabelValues(flagName, direction, result))
+	if after-before != 1 {
+		t.Errorf("FlagMismatchTotal delta = %v, want 1 (before=%v after=%v)", after-before, before, after)
 	}
 
 	// Verify response
@@ -310,7 +329,7 @@ func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
 
 func TestHandler_FeatureFlagDisabled_List(t *testing.T) {
 	pool := &mockPoolForHandler{}
-	router := buildTestRouter(nil, pool, "false")
+	router := buildTestRouter(t, nil, pool, "false")
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-User-ID", uuid.New().String())
@@ -329,7 +348,7 @@ func TestHandler_FeatureFlagDisabled_List(t *testing.T) {
 
 func TestHandler_Create_ValidationError_EchoesForm(t *testing.T) {
 	pool := &mockPoolForHandler{}
-	router := buildTestRouter(nil, pool, "true")
+	router := buildTestRouter(t, nil, pool, "true")
 
 	// scheduledStart too far in the past — validation should fail
 	body := `{"title":"Valid Title","scheduledStart":"2020-01-01T00:00:00Z"}`
@@ -357,7 +376,7 @@ func TestHandler_Create_ValidationError_EchoesForm(t *testing.T) {
 
 func TestHandler_Create_ValidationError_MissingTitle(t *testing.T) {
 	pool := &mockPoolForHandler{}
-	router := buildTestRouter(nil, pool, "true")
+	router := buildTestRouter(t, nil, pool, "true")
 
 	body := `{"title":"","scheduledStart":"` + time.Now().Add(2*time.Hour).Format(time.RFC3339) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))
@@ -381,7 +400,7 @@ func TestHandler_List_RepositoryError(t *testing.T) {
 		},
 	}
 	repo := &Repository{Pool: pool}
-	router := buildTestRouter(repo, pool, "true")
+	router := buildTestRouter(t, repo, pool, "true")
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-User-ID", uuid.New().String())
@@ -443,7 +462,7 @@ func TestHandler_Create_RepositoryError(t *testing.T) {
 		},
 	}
 	repo := &Repository{Pool: pool}
-	router := buildTestRouter(repo, pool, "true")
+	router := buildTestRouter(t, repo, pool, "true")
 
 	body := `{"title":"Test","scheduledStart":"` + time.Now().Add(2*time.Hour).Format(time.RFC3339) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))

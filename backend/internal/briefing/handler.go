@@ -138,19 +138,19 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker) http.Handl
 		})
 
 		// GET /upcoming/{meetingId}/briefing
-		r.Get("/upcoming/{meetingId}/briefing", handleGetBriefing(log))
+		g.Get("/upcoming/{meetingId}/briefing", handleGetBriefing(log))
 		// GET /upcoming/{meetingId}/briefing/versions
-		r.Get("/upcoming/{meetingId}/briefing/versions", handleListBriefingVersions(log))
+		g.Get("/upcoming/{meetingId}/briefing/versions", handleListBriefingVersions(log))
 		// GET /upcoming/{meetingId}/briefing/versions/{versionNumber}
-		r.Get("/upcoming/{meetingId}/briefing/versions/{versionNumber}", handleGetBriefingVersion(log))
+		g.Get("/upcoming/{meetingId}/briefing/versions/{versionNumber}", handleGetBriefingVersion(log))
 		// POST /upcoming/{meetingId}/briefing/regenerate
-		r.Post("/upcoming/{meetingId}/briefing/regenerate", handleRegenerateBriefing(log))
+		g.Post("/upcoming/{meetingId}/briefing/regenerate", handleRegenerateBriefing(log))
 		// GET /upcoming/{meetingId}/briefing/sources — FR-17: excluded/restored source visibility
-		r.Get("/upcoming/{meetingId}/briefing/sources", handleGetBriefingSources(log))
+		g.Get("/upcoming/{meetingId}/briefing/sources", handleGetBriefingSources(log))
 		// POST /upcoming/{meetingId}/briefing/sources/{sourceId}/exclude
-		r.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/exclude", handleExcludeSource(log))
+		g.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/exclude", handleExcludeSource(log))
 		// POST /upcoming/{meetingId}/briefing/sources/{sourceId}/restore
-		r.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/restore", handleRestoreSource(log))
+		g.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/restore", handleRestoreSource(log))
 	})
 
 	return r

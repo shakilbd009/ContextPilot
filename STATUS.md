@@ -20,20 +20,19 @@ This section is the **ground truth** for what is and is not yet true on disk. Re
 - `t_f6efb43c` (ops, this task): CI workflow hardened to match local gates. (1) Frontend job no longer calls `pnpm lint` (no `lint` script in `package.json`); the `lint` step is now a no-op SKIP that mirrors `make lint` behavior. (2) E2E job installs Node + pnpm + Playwright Chromium with system deps, then waits for backend `/healthz` and frontend root before running tests. (3) Security job installs `gosec` via `go install` and runs it blocking; TruffleHog runs via the official action and also blocks on findings. (4) `scripts/ci-local-dry-run.sh`, `scripts/ci-e2e.sh`, `scripts/ci-security.sh` plus `make ci-local`, `make ci-local-skip-e2e`, `make ci-e2e`, `make ci-security` give a local dry-run equivalent for every blocking CI gate. **Verified:** `make ci-local-skip-e2e` passes 8/8 gates on the working tree (architecture, sync-check, go vet, go test, pnpm install, svelte-check, pnpm test, pnpm build). E2E full-run still reproduces the 14 app-level failures flagged in `t_cf76b921` (out of recovery scope).
 - `t_c37b703c` (ops, this task): source-control delivery prepared. Cleaned `.gitignore` (added `backend/server`, `backend/contextpilot-server`, `backend/*.test`, `backend/cover.out`, `frontend/test-results/`, `frontend/playwright-report/`). Patched `scripts/ci-local-dry-run.sh` to export `CI=1` when not on a TTY so `pnpm install --frozen-lockfile` and `pnpm build` behave non-interactively under the kanban worker / CI runner. Did **not** commit two unreferenced speculative files (`frontend/src/test-types.d.ts`, `frontend/tsconfig.test.json`) — they are documented in the commit message as deliberate holds pending a wiring decision. Did **not** commit the deleted root-level binaries (`backend/briefing.test`, `backend/contextpilot-server`, `backend/server`) — they are staged as `D` so the next commit removes them from history. **No remote, no push, no main-touch**; awaiting Shakil's remote-create decision (see review-required handoff comment for exact commands).
 
-**Honest caveats (pre-commit — true at the moment of writing, will be re-stated post-commit):**
-- **Recovery code is being committed by `t_c37b703c` to `ops/restore-ci-baseline`.** Prior to that commit, the working tree carries the uncommitted fixes referenced in items 14-20 above. On the committed ref `89f250f`, `go test ./...` and `go vet ./...` fail (briefing package has a build error; `internal/upcoming` has 3 failing tests — the same ones the recovery work was supposed to fix). CI on the committed ref would not pass.
+**Honest caveats (as of 2026-06-01, pre-commit `t_c37b703c`):**
+- **Recovery code is staged on `ops/restore-ci-baseline` but not yet committed.** On the committed ref `89f250f`, `go test ./...` and `go vet ./...` fail (briefing package has a build error; `internal/upcoming` has 3 failing tests — the same ones the recovery work was supposed to fix). CI on the committed ref would not pass. After `t_c37b703c` lands, this caveat becomes "committed on `ops/restore-ci-baseline`; awaiting remote/push to exercise CI on a real ref."
 - **No GitHub remote exists.** CI gates exist in `.github/workflows/eval.yml` but cannot execute until Shakil creates a GitHub repo and pushes.
 - **E2E:** Playwright browsers are installed for the ops profile; 13 E2E passed and 14 failed in the parent run, all on app-level bugs in meeting-import and upcoming features. These are separate from the recovery scope.
 - **Frontend:** `pnpm test` (vitest) passes 25 files / 336 passed / 3 skipped. `pnpm exec svelte-check` passes with 0 errors and 7 warnings (all unused CSS selectors). `pnpm build` succeeds. All three run green inside the `eval-frontend` Makefile target.
 
 **Open recovery follow-ups (in priority order):**
-1. Backend recovery code commit (currently uncommitted working tree needs `git add` + `git commit` on `ops/restore-ci-baseline`). The briefing r→g fix is part of this batch — not a separate work item.
-2. Frontend recovery code commit (uncommitted working tree).
-3. `t_cf76b921` (done-auditor) re-audit after recovery code is committed.
-4. t_a43d9d1b flag-mismatch instrumentation (blocked on PM decision).
-5. t_e51a46af cleanup fold-ins: delete `debug_test.go` / `ff_debug_test.go`; wire or delete dead `ffOverrideKey` / `withFFOverride` / `getFFOverride` code.
-6. Resolve 14 E2E app-level failures (out of recovery scope).
-7. No GitHub remote — Shakil must create/connect.
+1. **DONE in this commit:** Backend + frontend recovery code committed on `ops/restore-ci-baseline` (single commit, scope = items 14-20 above). Briefing r→g fix is part of this batch. Source-control handoff awaits Shakil's remote-create decision (see `t_c37b703c` review-required comment for exact commands).
+2. `t_cf76b921` (done-auditor) re-audit after recovery code is committed and a real CI run has been observed on a remote ref.
+3. t_a43d9d1b flag-mismatch instrumentation (blocked on PM decision).
+4. t_e51a46af cleanup fold-ins: delete `debug_test.go` / `ff_debug_test.go`; wire or delete dead `ffOverrideKey` / `withFFOverride` / `getFFOverride` code.
+5. Resolve 14 E2E app-level failures (out of recovery scope).
+6. No GitHub remote — Shakil must create/connect (unblocks items 2 above).
 
 ---
 

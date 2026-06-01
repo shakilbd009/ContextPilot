@@ -4,6 +4,8 @@
 
 Lifecycle stages: `Planned` → `In Dev` → `Active` → `Deprecated` → `Removed`
 
+> **State vocabulary:** **Implemented** = code exists, **Gates Green** = committed code passes `make eval` on the committed ref, **Production-Ready** = `done-auditor` returned Trustworthy / Mostly trustworthy with no P0/P1. The **Lifecycle** column below describes implementation maturity; the **Gates Green on commit** column tells you whether a real ref passes the gates. Disagreement means recovery is incomplete. See [STATUS.md](../STATUS.md) → "Recovery state" for the current honest picture (as of 2026-06-01 no feature is Gates Green on a commit; the recovery work is in an uncommitted working tree on `ops/restore-ci-baseline`).
+
 ---
 
 ## UI Layer

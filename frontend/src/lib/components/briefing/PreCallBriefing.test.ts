@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type MockedFunction } from 'vitest';
 import { render, fireEvent, screen } from '@testing-library/svelte';
 import PreCallBriefing from './PreCallBriefing.svelte';
 import type {
@@ -99,10 +99,10 @@ const mockResolve = async () => {};
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 describe('PreCallBriefing', () => {
-  let onRegenerate: ReturnType<typeof vi.fn>;
-  let onExcludeSource: ReturnType<typeof vi.fn>;
-  let onRestoreSource: ReturnType<typeof vi.fn>;
-  let onResolveConflict: ReturnType<typeof vi.fn>;
+  let onRegenerate: MockedFunction<() => void>;
+  let onExcludeSource: MockedFunction<(sourceId: string) => void>;
+  let onRestoreSource: MockedFunction<(sourceId: string) => void>;
+  let onResolveConflict: MockedFunction<(conflictId: string, resolutionNote: string) => Promise<void>>;
 
   beforeEach(() => {
     onRegenerate = vi.fn();
@@ -370,10 +370,10 @@ describe('PreCallBriefing', () => {
 // ── ARIA live regions ───────────────────────────────────────────────────────────
 
 describe('PreCallBriefing — ARIA live regions', () => {
-  let onRegenerate: ReturnType<typeof vi.fn>;
-  let onExcludeSource: ReturnType<typeof vi.fn>;
-  let onRestoreSource: ReturnType<typeof vi.fn>;
-  let onResolveConflict: ReturnType<typeof vi.fn>;
+  let onRegenerate: MockedFunction<() => void>;
+  let onExcludeSource: MockedFunction<(sourceId: string) => void>;
+  let onRestoreSource: MockedFunction<(sourceId: string) => void>;
+  let onResolveConflict: MockedFunction<(conflictId: string, resolutionNote: string) => Promise<void>>;
 
   beforeEach(() => {
     onRegenerate = vi.fn();
@@ -410,10 +410,10 @@ describe('PreCallBriefing — ARIA live regions', () => {
 // ── HTML escaping (FR-4a, FR-13a) ────────────────────────────────────────────────
 
 describe('PreCallBriefing — HTML escaping (FR-4a, FR-13a)', () => {
-  let onRegenerate: ReturnType<typeof vi.fn>;
-  let onExcludeSource: ReturnType<typeof vi.fn>;
-  let onRestoreSource: ReturnType<typeof vi.fn>;
-  let onResolveConflict: ReturnType<typeof vi.fn>;
+  let onRegenerate: MockedFunction<() => void>;
+  let onExcludeSource: MockedFunction<(sourceId: string) => void>;
+  let onRestoreSource: MockedFunction<(sourceId: string) => void>;
+  let onResolveConflict: MockedFunction<(conflictId: string, resolutionNote: string) => Promise<void>>;
 
   beforeEach(() => {
     onRegenerate = vi.fn();

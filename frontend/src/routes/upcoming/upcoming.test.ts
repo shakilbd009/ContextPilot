@@ -62,6 +62,7 @@ afterEach(() => {
 
 // ── Import after mocks ───────────────────────────────────────────
 import UpcomingListPage from './+page.svelte';
+import type { PageData } from './$types';
 
 // ── Helper factories ─────────────────────────────────────────────
 
@@ -84,19 +85,15 @@ function makeMeeting(overrides: Partial<{
   };
 }
 
-function makeData(overrides: Partial<{
-  meetings: ReturnType<typeof makeMeeting>[];
-  total: number;
-  loading: boolean;
-  error: string | null;
-}> = {}) {
+function makeData(overrides: Partial<PageData> = {}): PageData {
   return {
+    ffEnableAppShell: false,
     meetings: [],
     total: 0,
     loading: false,
     error: null,
     ...overrides,
-  };
+  } as PageData;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────

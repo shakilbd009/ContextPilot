@@ -12,10 +12,13 @@
  * jsdom does not replicate Response.json() as a real async body stream, so we
  * test the null/error branches in unit tests and rely on E2E for the success path.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Cookies } from '@sveltejs/kit';
 
 const SERVER_URL = process.env.SERVER_URL ?? 'http://localhost:3000';
-function buildCookies(cookieHeader: string | null): { get: (name: string) => string | undefined } {
+
+// Build a minimal Cookies-compatible mock for testing
+function buildCookies(cookieHeader: string | null): Cookies {
   return {
     get: (name: string) => {
       if (!cookieHeader) return undefined;
@@ -25,7 +28,11 @@ function buildCookies(cookieHeader: string | null): { get: (name: string) => str
       });
       return match ? decodeURIComponent(match.split('=')[1]) : undefined;
     },
-  };
+    getAll: () => [],
+    set: () => {},
+    delete: () => {},
+    serialize: () => '',
+  } as Cookies;
 }
 
 describe('PageServerLoad', () => {
@@ -49,7 +56,7 @@ describe('PageServerLoad', () => {
       params: { id: '123' },
       cookies: buildCookies(null),
       fetch: fetchMock,
-    });
+    } as any);
 
     expect(result).toEqual({ meeting: null });
     expect(fetchMock).not.toHaveBeenCalled();
@@ -64,7 +71,7 @@ describe('PageServerLoad', () => {
       params: { id: '123' },
       cookies: buildCookies(''),
       fetch: fetchMock,
-    });
+    } as any);
 
     expect(result).toEqual({ meeting: null });
     expect(fetchMock).not.toHaveBeenCalled();
@@ -80,7 +87,7 @@ describe('PageServerLoad', () => {
       params: { id: 'not-found' },
       cookies: buildCookies('X-User-ID=user-uuid-123'),
       fetch: fetchMock, // also pass as explicit arg
-    });
+    } as any);
 
     expect(result).toEqual({ meeting: null });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -95,7 +102,7 @@ describe('PageServerLoad', () => {
       params: { id: '123' },
       cookies: buildCookies('X-User-ID=user-uuid-123'),
       fetch: fetchMock, // also pass as explicit arg
-    });
+    } as any);
 
     expect(result).toEqual({ meeting: null });
     expect(fetchMock).toHaveBeenCalledTimes(1);

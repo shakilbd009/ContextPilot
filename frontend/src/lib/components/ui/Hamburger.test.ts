@@ -46,7 +46,7 @@ describe('Hamburger', () => {
 	});
 
 	it('has aria-controls linking to drawer id', () => {
-		render(Hamburger, { 'aria-controls': 'nav-drawer' });
+		render(Hamburger, { open: false, 'aria-controls': 'nav-drawer' });
 		const button = screen.getByRole('button');
 		expect(button).toHaveAttribute('aria-controls', 'nav-drawer');
 	});

@@ -320,7 +320,7 @@
   {#if briefing.conflicts.length > 0}
     <BriefingConflictReview
       conflicts={briefing.conflicts}
-      {onResolveConflict}
+      onResolve={onResolveConflict}
     />
   {/if}
 </div>

@@ -41,19 +41,15 @@ async function signIn(page: import('@playwright/test').Page) {
 async function fillDateInput(page: import('@playwright/test').Page, value: string) {
   const input = page.locator('input[type="date"]');
   await input.waitFor({ state: 'visible' });
-  const el = await input.elementHandle();
-  await page.evaluate(
-    ({ el, value }) => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter?.call(el, value);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    },
-    { el, value }
-  );
+  await input.evaluate((el) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   await page.waitForFunction(
     () => {
-      const timeInput = document.querySelector('input[type="time"]');
+      const timeInput = document.querySelector('input[type="time"]') as HTMLInputElement | null;
       return timeInput && timeInput.labels && timeInput.labels.length > 0;
     },
     { timeout: 5000 }
@@ -194,9 +190,8 @@ test('AC-08: Edit flow within edit window changes title, schedule, participants'
   const editBtn = page.getByRole('button', { name: /edit/i });
   await editBtn.click();
   await page.waitForURL(/edit/);
-  const titleInput = page.getByLabel(/meeting title/i) as HTMLInputElement;
-  await expect(titleInput).toHaveValue('Original Title');
-  await titleInput.fill('Updated Title');
+  await expect(page.getByLabel(/meeting title/i)).toHaveValue('Original Title');
+  await page.getByLabel(/meeting title/i).fill('Updated Title');
   const { date: newDate, time: newTime } = futureDate(3, 14, 30);
   await fillDateInput(page, newDate);
   await fillTimeInput(page, newTime);

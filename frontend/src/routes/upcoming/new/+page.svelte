@@ -129,7 +129,7 @@
       participants: participants
         .filter(p => p.displayName.trim() || p.email.trim())
         .map(p => ({
-          displayName: p.displayName.trim() || undefined,
+          displayName: p.displayName.trim(),
           email: p.email.trim() || undefined,
           organization: p.organization.trim() || undefined,
         })),

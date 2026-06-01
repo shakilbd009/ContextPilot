@@ -2,7 +2,7 @@
 // Ref: evals/e2e/brd-05-manual-upcoming-meeting-creation.md
 // Security eval reference: evals/security/brd-05-manual-upcoming-meeting-creation.md
 
-export const load = async ({ fetch }) => {
+export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {
   const flag = import.meta.env.VITE_FF_ENABLE_UPCOMING_MEETINGS === 'true';
   if (!flag) {
     return { meetings: [], total: 0, loading: false, error: null };

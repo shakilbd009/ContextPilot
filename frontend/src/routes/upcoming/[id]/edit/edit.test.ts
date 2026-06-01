@@ -26,11 +26,8 @@ vi.mock('$app/navigation', () => ({
   goto: vi.fn(),
 }));
 
-// ── Mock $app/stores (page) ──────────────────────────────────────
-// Must use vi.hoisted so pageStore is initialized at the same time as the mock
-// (both vi.mock and vi.hoisted are hoisted to module top, avoiding TDZ errors)
+// ── Mock $app/stores (page) — hoisted sync store factory ─
 const { pageStore } = vi.hoisted(() => {
-  // require() inside the factory avoids TDZ — runs at mock evaluation time, not module top
   const { writable } = require('svelte/store');
   return { pageStore: writable({ params: { id: 'edit-id-456' } }) };
 });
@@ -51,10 +48,12 @@ afterEach(() => {
 
 // ── Mock $lib/api/upcoming ──────────────────────────────────────
 // Use vi.hoisted so mock refs are at same hoisting level as vi.mock (avoids TDZ)
-const api = vi.hoisted(() => ({
-  getUpcomingMeeting: vi.fn(),
-  updateUpcomingMeeting: vi.fn(),
-}));
+const api = vi.hoisted(() => {
+  // Cast to MockInstance to get mockResolvedValueOnce / mockImplementationOnce
+  const getUpcomingMeeting = vi.fn() as unknown as import('vitest').MockInstance;
+  const updateUpcomingMeeting = vi.fn() as unknown as import('vitest').MockInstance;
+  return { getUpcomingMeeting, updateUpcomingMeeting };
+});
 
 vi.mock('$lib/api/upcoming', () => ({
   getUpcomingMeeting: api.getUpcomingMeeting,
@@ -111,7 +110,7 @@ describe('EditPage — feature flag disabled', () => {
 describe('EditPage — loading state', () => {
   it('shows spinner while meeting is loading', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockImplementationOnce(() => new Promise(() => {}));
+    (api.getUpcomingMeeting as any).mockImplementationOnce(() => new Promise(() => {}));
     renderPage();
 
     await vi.waitFor(() => {
@@ -123,7 +122,7 @@ describe('EditPage — loading state', () => {
 describe('EditPage — not found state', () => {
   it('shows not found alert when meeting does not exist', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: false,
       status: 404,
       data: { error: 'not_found', message: 'Meeting not found' },
@@ -140,7 +139,7 @@ describe('EditPage — edit window expired (FR-9)', () => {
   it('shows read-only warning when edit window has passed', async () => {
     const api = await importApi();
     // Meeting 1 hour in the past — window definitely expired
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ scheduledStart: new Date(Date.now() - 60 * 60 * 1000).toISOString() }),
     });
@@ -173,7 +172,7 @@ describe('EditPage — edit window expired (FR-9)', () => {
 
   it('hides form when edit window expired', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ scheduledStart: new Date(Date.now() - 60 * 60 * 1000).toISOString() }),
     });
@@ -186,7 +185,7 @@ describe('EditPage — edit window expired (FR-9)', () => {
 
   it('shows "View meeting details" button when expired', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ scheduledStart: new Date(Date.now() - 20 * 60 * 1000).toISOString() }),
     });
@@ -201,7 +200,7 @@ describe('EditPage — edit window expired (FR-9)', () => {
 describe('EditPage — edit window active', () => {
   it('shows countdown badge when edit window is active', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ scheduledStart: new Date(Date.now() + 10 * 60 * 1000).toISOString() }),
     });
@@ -214,7 +213,7 @@ describe('EditPage — edit window active', () => {
 
   it('form pre-fills title from existing meeting', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ title: 'Q3 Planning Review' }),
     });
@@ -229,7 +228,7 @@ describe('EditPage — edit window active', () => {
   it('form pre-fills date and time from existing meeting', async () => {
     const api = await importApi();
     const scheduledStart = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ scheduledStart }),
     });
@@ -246,7 +245,7 @@ describe('EditPage — edit window active', () => {
 
   it('form pre-fills description when present', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ description: 'Quarterly review session' }),
     });
@@ -260,7 +259,7 @@ describe('EditPage — edit window active', () => {
 
   it('form pre-fills client/organization when present', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ clientOrOrganization: 'Acme Corp' }),
     });
@@ -284,7 +283,7 @@ describe('EditPage — edit window active', () => {
 describe('EditPage — submit button state', () => {
   it('submit button is enabled when form has all required fields', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({ ok: true, data: makeMeeting() });
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({ ok: true, data: makeMeeting() });
     renderPage();
 
     await vi.waitFor(() => {
@@ -298,8 +297,8 @@ describe('EditPage — server validation errors (FR-15)', () => {
   it('shows error alert when submission returns server errors', async () => {
     const api = await importApi();
     cleanup();
-    api.getUpcomingMeeting.mockResolvedValueOnce({ ok: true, data: makeMeeting() });
-    api.updateUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({ ok: true, data: makeMeeting() });
+    (api.updateUpcomingMeeting as any).mockResolvedValueOnce({
       ok: false,
       status: 400,
       data: {
@@ -327,11 +326,11 @@ describe('EditPage — server validation errors (FR-15)', () => {
   it('shows "not editable" error when server says edit window expired', async () => {
     const api = await importApi();
     cleanup();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ scheduledStart: new Date(Date.now() + 5 * 60 * 1000).toISOString() }),
     });
-    api.updateUpcomingMeeting.mockResolvedValueOnce({
+    (api.updateUpcomingMeeting as any).mockResolvedValueOnce({
       ok: false,
       status: 422,
       data: { error: 'not_editable', message: 'Edit window has passed. This meeting is now read-only.' },
@@ -351,7 +350,7 @@ describe('EditPage — server validation errors (FR-15)', () => {
 describe('EditPage — cancel button', () => {
   it('navigates back to meeting detail when clicked', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({ ok: true, data: makeMeeting() });
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({ ok: true, data: makeMeeting() });
     renderPage();
 
     await vi.waitFor(() => {
@@ -365,7 +364,7 @@ describe('EditPage — cancel button', () => {
 describe('EditPage — participant management', () => {
   it('shows add participant button', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ participants: [{ displayName: 'Alice' }] }),
     });
@@ -385,7 +384,7 @@ describe('EditPage — participant management', () => {
 
   it('shows remove buttons when more than one participant', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ participants: [{ displayName: 'Alice' }, { displayName: 'Bob' }] }),
     });
@@ -401,7 +400,7 @@ describe('EditPage — participant management', () => {
 describe('EditPage — page title', () => {
   it('sets page title to Edit: [title] when meeting loaded', async () => {
     const api = await importApi();
-    api.getUpcomingMeeting.mockResolvedValueOnce({
+    (api.getUpcomingMeeting as any).mockResolvedValueOnce({
       ok: true,
       data: makeMeeting({ title: 'Q3 Planning' }),
     });

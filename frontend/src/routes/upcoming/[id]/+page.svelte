@@ -24,14 +24,14 @@
 
   // ── Edit-window countdown (FR-9) ─────────────────────────────
   // Milliseconds remaining in the edit window; null means window not applicable
-  const editWindowRemaining = $derived(() => {
+  const editWindowRemaining = $derived.by(() => {
     if (!meeting) return null;
     const deadline = new Date(new Date(meeting.scheduledStart).getTime() + 15 * 60 * 1000);
     return Math.max(0, deadline.getTime() - Date.now());
   });
 
-  const isEditable = $derived(() => editWindowRemaining() > 0);
-  const isCancellable = $derived(() => editWindowRemaining() > 0);
+  const isEditable = $derived(editWindowRemaining !== null && editWindowRemaining > 0);
+  const isCancellable = $derived(editWindowRemaining !== null && editWindowRemaining > 0);
 
   // Live countdown tick
   $effect(() => {
@@ -39,9 +39,9 @@
       timeRemaining = null;
       return;
     }
-    timeRemaining = editWindowRemaining();
+    timeRemaining = editWindowRemaining;
     const id = setInterval(() => {
-      timeRemaining = editWindowRemaining();
+      timeRemaining = editWindowRemaining;
       if (timeRemaining === 0) clearInterval(id);
     }, 1000);
     return () => clearInterval(id);
@@ -161,19 +161,19 @@
               </svg>
               {formatCountdown(timeRemaining)}
             </span>
-          {:else if meeting.status === 'scheduled' && !isEditable()}
+          {:else if meeting.status === 'scheduled' && !isEditable}
             <span class="readonly-indicator" title="Edit window has passed">Read-only</span>
           {/if}
         </div>
       </div>
       <div class="page-header__actions">
         {#if meeting.status === 'scheduled'}
-          {#if isEditable()}
+          {#if isEditable}
             <Button variant="secondary" onclick={() => goto(`/upcoming/${meetingId}/edit`)}>
               Edit
             </Button>
           {/if}
-          {#if isCancellable()}
+          {#if isCancellable}
             <Button variant="danger" loading={cancelling} onclick={handleCancel}>
               Cancel meeting
             </Button>
