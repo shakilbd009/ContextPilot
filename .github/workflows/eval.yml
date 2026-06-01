@@ -88,23 +88,20 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node
+        # Cache is intentionally NOT enabled here. The
+        # actions/setup-node@v4 pnpm cache code path (cache: 'pnpm' +
+        # cache-dependency-path) is the failure surface — both
+        # Frontend job runs 26762987092 and 26765953548 failed at this
+        # step with it enabled, even when the lockfile path was valid.
+        # pnpm/action-setup below provides the binary; for the store
+        # cache, add an explicit actions/cache keyed on
+        # frontend/pnpm-lock.yaml at a later date if cold-cache time
+        # becomes a problem.
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install pnpm
-        # pnpm/action-setup@<sha-pin> is preferred over `npm install -g pnpm`
-        # for two reasons:
-        # 1. It puts pnpm on PATH for every subsequent step (the
-        #    npm-install-g route has a documented PATH issue when
-        #    combined with actions/setup-node's pnpm cache, which is
-        #    exactly what was breaking Frontend job run 26762987092).
-        # 2. It pins the pnpm version in one place (env.PNPM_VERSION)
-        #    and refuses to install if the requested version is missing
-        #    from the action's mirrored registry, instead of silently
-        #    installing whatever npm registry serves.
         uses: pnpm/action-setup@v6.0.8
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -188,11 +185,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node
+        # See Frontend job for the rationale on not using setup-node's
+        # built-in pnpm cache.
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6.0.8
