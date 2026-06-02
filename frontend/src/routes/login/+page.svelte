@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, Input, Alert } from '$lib/components/ui';
   import { loginAndStore } from '$lib/stores/auth';
+  import { safeRedirect } from '$lib/utils/safeRedirect';
 
   let email = $state('');
   let password = $state('');
@@ -20,9 +21,9 @@
 
     try {
       await loginAndStore(email.trim(), password);
-      // Redirect to ?redirectTo or the dashboard.
+      // Redirect to ?redirectTo or the dashboard (CWE-601 safe).
       const params = new URLSearchParams(window.location.search);
-      const redirectTo = params.get('redirectTo') || '/';
+      const redirectTo = safeRedirect(params.get('redirectTo'));
       window.location.href = redirectTo;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Invalid email or password';

@@ -192,11 +192,11 @@ type redisClient interface {
 	TTL(ctx context.Context, key string) (time.Duration, error)
 }
 
-func newRedisStore(log zerolog.Logger, redisURL, keyPrefix string, window time.Duration) *redisStore {
+func newRedisStore(log zerolog.Logger, redisURL, keyPrefix string, window time.Duration) ratelimitStore {
 	client, err := newRedisClient(redisURL)
 	if err != nil {
 		log.Warn().Err(err).Msg("failed to connect to Redis for rate limiting; falling back to in-memory")
-		return nil
+		return newInMemoryStore(log, 0, window)
 	}
 	return &redisStore{
 		log:       log,
