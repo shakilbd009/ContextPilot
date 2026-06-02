@@ -60,6 +60,25 @@ func main() {
 		log.Info().Msg("DATABASE_URL not set; running without DB (app-shell only)")
 	}
 
+	// CSRF middleware (CWE-352) — Origin/Referer allowlist applied to all
+	// state-changing methods (POST/PUT/PATCH/DELETE) at the chi router
+	// layer. Defense-in-depth alongside the SvelteKit /api/* hooks-layer
+	// check. Only installed when CSRF_ALLOWED_ORIGINS is non-empty
+	// (empty = disabled for dev/fallback).
+	var csrfMiddleware func(http.Handler) http.Handler
+	if len(cfg.CSRFAllowedOrigins) > 0 {
+		csrfMiddleware = middleware.NewCSRF(
+			log.Logger,
+			middleware.CSRFConfig{
+				AllowedOrigins: cfg.CSRFAllowedOrigins,
+				Enabled:        true,
+			},
+		)
+		log.Info().
+			Strs("allowed_origins", cfg.CSRFAllowedOrigins).
+			Msg("CSRF middleware enabled")
+	}
+
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -67,6 +86,12 @@ func main() {
 	r.Use(middleware.Recover(log.Logger))
 	r.Use(chiware.Logger)
 	r.Use(chiware.Timeout(30 * time.Second))
+
+	// CSRF middleware — only active when CSRF_ALLOWED_ORIGINS is set.
+	// GET/HEAD/OPTIONS pass through untouched (zero impact on read traffic).
+	if csrfMiddleware != nil {
+		r.Use(csrfMiddleware)
+	}
 
 	// Health endpoints
 	r.Get("/healthz", handler.Healthz)

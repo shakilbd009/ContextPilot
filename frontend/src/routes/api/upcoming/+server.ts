@@ -81,12 +81,18 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
   return json({ meetings, total: meetings.length });
 };
 
-export const POST: RequestHandler = async ({ request, fetch }) => {
+export const POST: RequestHandler = async ({ request, fetch, cookies }) => {
   void fetch;
   const flag = process.env.FF_ENABLE_UPCOMING_MEETINGS ?? 'false';
   if (flag !== 'true') {
     return json({ error: 'feature_disabled', message: 'Upcoming meetings are not enabled.' }, { status: 403 });
   }
+
+  // Derive createdBy server-side from the session cookie (never trust client).
+  // In production this would be a verified JWT/session token; here we use the
+  // raw cookie value as a stable user identifier for the in-memory store.
+  const sessionID = cookies.get('session_id') ?? 'anonymous';
+  const createdBy = `user-${Buffer.from(sessionID).toString('base64').slice(0, 8)}`;
 
   try {
     const body = await request.json();
@@ -127,7 +133,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       description: description?.trim() || undefined,
       clientOrOrganization: clientOrOrganization?.trim() || undefined,
       status: 'scheduled' as const,
-      createdBy: 'user-1', // stub: would come from auth in production
+      createdBy, // derived server-side from session cookie (not client-supplied)
       createdAt: now,
       updatedAt: now,
       participants: (participants ?? []).map((p: { displayName?: string; email?: string; organization?: string }) => ({
