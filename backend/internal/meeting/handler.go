@@ -103,6 +103,21 @@ func getCorrelationID(r *http.Request) string {
 // The rateLimitMiddleware is applied to POST /meetings (import) to prevent abuse.
 // Pass nil to disable rate limiting on this handler.
 func Handler(log *zerolog.Logger, pool *pgxpool.Pool, rateLimitMiddleware func(http.Handler) http.Handler) http.Handler {
+	return HandlerWithSubRoute(log, pool, rateLimitMiddleware, nil)
+}
+
+// HandlerWithSubRoute returns a chi router with meeting CRUD routes and
+// optionally delegates /{id}/... sub-routes to the provided mount function.
+// Use this instead of Handler when the caller needs to nest feature
+// sub-resources (e.g. memory) under the meeting router. Registering the
+// sub-router via Route("/{id}", ...) lets chi's radix tree do
+// longest-prefix matching at the {id} node, so /{id}/memory/... reaches
+// the sub-router and /{id} still reaches the meeting handler.
+//
+// The mount function receives a sub-router scoped at /{id} and should
+// register its routes relative to that prefix. Pass nil to skip the
+// delegation when no sub-resources are needed.
+func HandlerWithSubRoute(log *zerolog.Logger, pool *pgxpool.Pool, rateLimitMiddleware func(http.Handler) http.Handler, mountSubRoute func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 
 	// Inject repository into context
@@ -140,6 +155,15 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool, rateLimitMiddleware func(h
 
 		// GET /meetings — list meetings
 		r.Get("/", handleListMeetings(log))
+
+		// Delegate /{id}/... sub-routes BEFORE registering /{id} handlers.
+		// chi's radix tree handles Route("/{id}", ...) + Get("/{id}", ...)
+		// correctly when the Route is registered first: longer paths
+		// (/{id}/memory/...) reach the sub-router and /{id} still matches
+		// the GET/PATCH handlers below.
+		if mountSubRoute != nil {
+			r.Route("/{id}", mountSubRoute)
+		}
 
 		// GET /meetings/{id} — get meeting detail
 		r.Get("/{id}", handleGetMeeting(log))
