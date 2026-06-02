@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Button, Input, Card, Alert } from '$lib/components/ui';
+  import { Button, Input, Alert } from '$lib/components/ui';
+  import { signupAndStore } from '$lib/stores/auth';
 
   let name = $state('');
   let email = $state('');
@@ -7,6 +8,10 @@
   let saving = $state(false);
   let error = $state('');
 
+  // F4 fix: no more document.cookie writes. The session cookie is
+  // HttpOnly + Secure + SameSite=Strict, set by the server's
+  // Set-Cookie response. The client cannot read it (and must not
+  // try to).
   async function handleSubmit(e: Event) {
     e.preventDefault();
     if (!name.trim() || !email.trim() || !password.trim()) return;
@@ -14,12 +19,10 @@
     error = '';
 
     try {
-      // TODO: replace with real auth API call when backend is ready
-      await new Promise((r) => setTimeout(r, 500));
-      document.cookie = `session_id=demo-session; path=/; SameSite=Lax`;
+      await signupAndStore(name.trim(), email.trim(), password);
       window.location.href = '/';
-    } catch {
-      error = 'Something went wrong. Please try again.';
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
     } finally {
       saving = false;
     }
