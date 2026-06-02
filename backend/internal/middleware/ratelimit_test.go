@@ -526,8 +526,6 @@ func TestRateLimiter_NoKeyFunc_FallsBackToDefault(t *testing.T) {
 	}
 }
 
-// --- Response body JSON parsing ---
-
 func TestRateLimit429ResponseBody(t *testing.T) {
 	log := zerolog.New(nil)
 	cfg := RateLimiterConfig{
@@ -594,5 +592,56 @@ func TestRateLimitHeaderFormat(t *testing.T) {
 	reset := w.Header().Get("X-RateLimit-Reset")
 	if _, err := strconv.ParseInt(reset, 10, 64); err != nil {
 		t.Errorf("X-RateLimit-Reset = %q, want unix timestamp", reset)
+	}
+}
+
+// TestNewRedisStore_ReturnsNilOnFailure verifies that newRedisStore returns
+// nil when Redis is unavailable (or not configured), so NewRateLimiter falls
+// back to the in-memory store instead of panicking on a nil redisStore.
+func TestNewRedisStore_ReturnsNilOnFailure(t *testing.T) {
+	log := zerolog.New(nil)
+	// Any invalid/unreachable URL will cause newRedisClient to fail.
+	store := newRedisStore(log, "redis://invalid:9999", "rl:", 1*time.Minute)
+	if store != nil {
+		t.Errorf("newRedisStore returned %+v, want nil when Redis is unavailable", store)
+	}
+}
+
+// TestRateLimiter_RedisUnavailable_FallsBackToInMemory verifies that when a
+// non-empty REDIS_URL is provided but Redis is unreachable, NewRateLimiter
+// falls back to the in-memory store instead of returning a nil interface or
+// panicking.
+func TestRateLimiter_RedisUnavailable_FallsBackToInMemory(t *testing.T) {
+	log := zerolog.New(nil)
+	cfg := RateLimiterConfig{
+		Enabled:     true,
+		MaxRequests: 2,
+		Window:      1 * time.Minute,
+	}
+	// Provide a non-empty but unreachable Redis URL to trigger the fallback.
+	mw := NewRateLimiter(log, cfg, "redis://invalid:9999", nil)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Both requests should succeed via the in-memory fallback.
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		w := httptest.NewRecorder()
+		mw(handler).ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("request %d: status = %d, want %d (in-memory fallback should serve)", i+1, w.Code, http.StatusOK)
+		}
+	}
+
+	// Third request should be rate-limited (not panic or return 500).
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	w := httptest.NewRecorder()
+	mw(handler).ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("3rd request: status = %d, want %d (in-memory rate limit should apply)", w.Code, http.StatusTooManyRequests)
 	}
 }

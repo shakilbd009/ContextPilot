@@ -83,6 +83,9 @@ func NewRateLimiter(
 	var store ratelimitStore
 	if redisURL != "" {
 		store = newRedisStore(log, redisURL, cfg.KeyPrefix, cfg.Window)
+		if store == nil {
+			store = newInMemoryStore(log, cfg.MaxRequests, cfg.Window)
+		}
 	} else {
 		store = newInMemoryStore(log, cfg.MaxRequests, cfg.Window)
 	}
@@ -196,7 +199,7 @@ func newRedisStore(log zerolog.Logger, redisURL, keyPrefix string, window time.D
 	client, err := newRedisClient(redisURL)
 	if err != nil {
 		log.Warn().Err(err).Msg("failed to connect to Redis for rate limiting; falling back to in-memory")
-		return newInMemoryStore(log, 0, window)
+		return nil
 	}
 	return &redisStore{
 		log:       log,
