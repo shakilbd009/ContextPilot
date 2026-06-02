@@ -279,6 +279,35 @@ func TestHandler_List_Unauthenticated(t *testing.T) {
 
 // ─── Test 2: Feature flag disabled returns 200 with code "feature_disabled" ───
 
+// TestHandler_List_Success_EmptyDB verifies that GET /upcoming with a valid
+// X-User-ID, FF enabled, and an empty database returns 200 with [] (NOT 500).
+// This is the regression test for ethical-hacker finding F-A (t_42c0144b):
+// before adding r.Use(WithRepository(pool)) to Handler(), getRepository(r)
+// returned nil, causing handleListUpcomingMeetings to log
+// "no repository in request context" and return 500.
+func TestHandler_List_Success_EmptyDB(t *testing.T) {
+	pool := &mockPoolForHandler{
+		// Empty result set — ListMeetings returns nil/empty slice.
+		queryFn: func(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+			return &mockRowsForHandler{values: nil}, nil
+		},
+	}
+	repo := &Repository{Pool: pool}
+	router := buildTestRouter(t, repo, pool, "true")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-User-ID", uuid.New().String())
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got := w.Body.String(); got != "[]" && got != "[]\n" {
+		t.Errorf("body = %q, want %q or %q", got, "[]", "[]\n")
+	}
+}
+
 func TestHandler_FeatureFlagDisabled_Create(t *testing.T) {
 	pool := &mockPoolForHandler{}
 	router := buildTestRouter(t, nil, pool, "false")
