@@ -47,9 +47,14 @@
       // Update auth store
       login('Demo User', email);
 
-      // Redirect to dashboard or ?redirectTo param
-      const params = new URLSearchParams(window.location.search);
-      const redirectTo = params.get('redirectTo') || '/';
+      // Redirect to dashboard or ?redirectTo param (CWE-601: must be same-origin path only)
+      function safeRedirect(target: string | null): string {
+        if (!target) return '/';
+        if (!target.startsWith('/')) return '/';
+        if (target.startsWith('//')) return '/';
+        return target;
+      }
+      const redirectTo = safeRedirect(new URLSearchParams(window.location.search).get('redirectTo'));
       window.location.href = redirectTo;
     } catch {
       error = 'Invalid email or password';
