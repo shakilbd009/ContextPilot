@@ -6,6 +6,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { validateCreateUpcoming } from '$lib/validation/upcoming';
 
 // Module-level store shared across all /api/upcoming/* routes via globalThis.
 // SvelteKit route modules for different route segments do NOT share module scope,
@@ -89,39 +90,33 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 
   try {
     const body = await request.json();
-    const { title, scheduledStart, description, clientOrOrganization, participants } = body;
 
-    // Validate required fields
-    const errors: Array<{ field: string; message: string }> = [];
-    if (!title?.trim()) errors.push({ field: 'title', message: 'Title is required.' });
-    if (!scheduledStart) {
-      errors.push({ field: 'scheduledStart', message: 'Scheduled start is required.' });
-    } else {
+    // ── Static validation (CWE-20 — finding F5 of t_793ea842) ──
+    // Length caps, control character rejection, HTML-tag rejection,
+    // type/format checks. Pure deterministic rules — testable without
+    // a clock. The shared validator is the security boundary; the
+    // time-window check below is the only handler-local rule.
+    const errors = validateCreateUpcoming(body);
+
+    // ── Time-window validation (non-deterministic, lives here) ──
+    const { scheduledStart } = body;
+    if (typeof scheduledStart === 'string') {
       const scheduled = new Date(scheduledStart);
       const minTime = new Date(Date.now() - 15 * 60 * 1000);
-      if (scheduled < minTime) {
-        errors.push({ field: 'scheduledStart', message: 'Scheduled start must be at least 15 minutes in the future.' });
-      }
-    }
-    // Validate participants
-    if (participants) {
-      if (participants.length > 50) {
-        errors.push({ field: 'participants', message: 'Too many participants. Maximum is 50.' });
-      }
-      for (let i = 0; i < participants.length; i++) {
-        const p = participants[i];
-        if (!p.displayName?.trim() && !p.email?.trim()) {
-          errors.push({ field: `participants[${i}]`, message: 'Participant must have a display name or email.' });
-        }
-        if (p.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) {
-          errors.push({ field: `participants[${i}].email`, message: 'Invalid email format.' });
-        }
+      if (Number.isFinite(scheduled.getTime()) && scheduled < minTime) {
+        errors.push({
+          field: 'scheduledStart',
+          message: 'Scheduled start must be at least 15 minutes in the future.',
+        });
       }
     }
 
     if (errors.length > 0) {
       return json({ error: 'validation_failed', errors }, { status: 400 });
     }
+
+    // Safe to read fields now that the validator passed.
+    const { title, description, clientOrOrganization, participants } = body as Record<string, any>;
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
