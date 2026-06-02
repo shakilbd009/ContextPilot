@@ -11,42 +11,34 @@
   // ── Upcoming meetings dashboard (FR-21) ──────────────────────────
   const ffEnableUpcomingMeetings = import.meta.env.VITE_FF_ENABLE_UPCOMING_MEETINGS === 'true';
 
-  // Populate upcoming count/hint via direct DOM update
+  // F1 (CWE-79) repair: the previous implementation imperatively set
+  // `cardEl.innerHTML = \`<p>${next.title} ...</p>\``, which interpolated
+  // the user-controlled meeting title unescaped — a stored-XSS sink
+  // (PoC: title `<img src=x onerror=alert(1)>` fired the alert).
+  // The new implementation uses Svelte reactive state + `{...}` text
+  // interpolation in the template below, which auto-escapes HTML so
+  // malicious payloads render as literal text, never as DOM elements.
+  type NextMeeting = { title: string; scheduledStart?: string; scheduled_start?: string };
+  let upcomingCount: number | null = $state(null);
+  let nextMeeting: NextMeeting | null = $state(null);
+  let loadError = $state(false);
+
   $effect(() => {
     if (!ffEnableUpcomingMeetings) return;
-    const countEl = document.getElementById('upcoming-count');
-    const hintEl = document.getElementById('upcoming-hint');
-    const cardEl = document.getElementById('upcoming-meetings-card');
-    if (!countEl || !hintEl || !cardEl) return;
-
     fetch('/api/upcoming/dashboard-count')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
+      .then(r => (r.ok ? r.json() : null))
+      .then((data: { count?: number; nextMeeting?: NextMeeting | null } | null) => {
         if (!data) return;
-        const n = data.count ?? 0;
-        countEl.textContent = String(n);
-        if (n === 0) {
-          hintEl.textContent = 'No meetings scheduled';
-          cardEl.innerHTML = `<p class="empty-hint">No upcoming meetings. <a href="/upcoming/new">Schedule one</a> to get started.</p>`;
-        } else {
-          const next = data.nextMeeting;
-          hintEl.textContent = next
-            ? `Next: ${next.title} — ${formatRelativeDay(next.scheduled_start ?? next.scheduledStart)}`
-            : 'Meetings scheduled';
-          if (n === 1 && next) {
-            cardEl.innerHTML = `<p class="next-meeting-hint">${next.title} <span class="muted">— ${formatRelativeDay(next.scheduled_start ?? next.scheduledStart)}</span></p>`;
-          } else {
-            cardEl.innerHTML = `<p class="next-meeting-hint">${n} meeting${n !== 1 ? 's' : ''} scheduled</p>`;
-          }
-        }
+        upcomingCount = data.count ?? 0;
+        nextMeeting = data.nextMeeting ?? null;
       })
       .catch(() => {
-        countEl.textContent = '—';
-        hintEl.textContent = 'Unable to load';
+        loadError = true;
       });
   });
 
-  function formatRelativeDay(iso: string): string {
+  function formatRelativeDay(iso: string | undefined): string {
+    if (!iso) return '';
     const d = new Date(iso);
     const today = new Date();
     const tomorrow = new Date();
@@ -55,6 +47,24 @@
     if (d.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
+
+  // Derived strings consumed by `{#if}` branches below. Svelte's `{...}`
+  // text interpolation will textContent-set these — no innerHTML anywhere.
+  const countDisplay = $derived.by(() => {
+    if (loadError || upcomingCount === null) return '—';
+    return String(upcomingCount);
+  });
+
+  const hintText = $derived.by(() => {
+    if (loadError) return 'Unable to load';
+    if (upcomingCount === null) return 'Loading…';
+    if (upcomingCount === 0) return 'No meetings scheduled';
+    if (upcomingCount === 1 && nextMeeting) {
+      const when = formatRelativeDay(nextMeeting.scheduledStart ?? nextMeeting.scheduled_start);
+      return `Next: ${nextMeeting.title} — ${when}`;
+    }
+    return 'Meetings scheduled';
+  });
 </script>
 
 <svelte:head>
@@ -117,8 +127,8 @@
       <div class="dashboard__stats">
         <Card>
           <p class="stat__label">Upcoming meetings</p>
-          <p class="stat__value" id="upcoming-count" aria-live="polite">—</p>
-          <p class="stat__hint" id="upcoming-hint">Loading…</p>
+          <p class="stat__value" id="upcoming-count" aria-live="polite">{countDisplay}</p>
+          <p class="stat__hint" id="upcoming-hint">{hintText}</p>
         </Card>
         <Card>
           <p class="stat__label">Briefings due</p>
@@ -140,8 +150,23 @@
           {/if}
         </div>
         {#if ffEnableUpcomingMeetings}
+          <!--
+            F1 (CWE-79) repair: was `cardEl.innerHTML = ...` interpolating
+            `next.title` unescaped. Now rendered through Svelte `{#if}` branches
+            with `{...}` text interpolation, which auto-escapes HTML.
+          -->
           <div id="upcoming-meetings-card">
-            <!-- Filled dynamically via JS -->
+            {#if loadError}
+              <p class="empty-hint">Unable to load upcoming meetings.</p>
+            {:else if upcomingCount === null}
+              <p class="empty-hint">Loading…</p>
+            {:else if upcomingCount === 0}
+              <p class="empty-hint">No upcoming meetings. <a href="/upcoming/new">Schedule one</a> to get started.</p>
+            {:else if upcomingCount === 1 && nextMeeting}
+              <p class="next-meeting-hint">{nextMeeting.title} <span class="muted">— {formatRelativeDay(nextMeeting.scheduledStart ?? nextMeeting.scheduled_start)}</span></p>
+            {:else}
+              <p class="next-meeting-hint">{upcomingCount} meeting{upcomingCount !== 1 ? 's' : ''} scheduled</p>
+            {/if}
           </div>
         {:else}
           <Alert variant="info">
