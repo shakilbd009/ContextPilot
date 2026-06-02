@@ -4,6 +4,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { validateUpdateUpcoming } from '$lib/validation/upcoming';
 
 // Reuse the same in-memory store from +server.ts in the same module scope
 // NOTE: SvelteKit server routes in the same route segment share module scope,
@@ -77,32 +78,32 @@ export const PATCH: RequestHandler = async ({ params, request, fetch }) => {
 
   try {
     const body = await request.json();
-    const { title, scheduledStart: newStart, description, clientOrOrganization, participants } = body;
 
-    const errors: Array<{ field: string; message: string }> = [];
-    if (title !== undefined && !title?.trim()) errors.push({ field: 'title', message: 'Title cannot be empty.' });
-    if (newStart !== undefined) {
+    // ── Static validation (CWE-20 — finding F5 of t_793ea842) ──
+    // Length caps, control character rejection, HTML-tag rejection,
+    // type/format checks. Every field is optional on PATCH; the
+    // validator only checks fields the caller actually provided.
+    const errors = validateUpdateUpcoming(body);
+
+    // ── Time-window validation (non-deterministic, lives here) ──
+    const { scheduledStart: newStart } = body;
+    if (typeof newStart === 'string') {
       const scheduled = new Date(newStart);
       const minTime = new Date(Date.now() - 15 * 60 * 1000);
-      if (scheduled < minTime) {
-        errors.push({ field: 'scheduledStart', message: 'Scheduled start must be at least 15 minutes in the future.' });
-      }
-    }
-    if (participants && participants.length > 50) {
-      errors.push({ field: 'participants', message: 'Too many participants. Maximum is 50.' });
-    }
-    if (participants) {
-      for (let i = 0; i < participants.length; i++) {
-        const p = participants[i];
-        if (!p.displayName?.trim() && !p.email?.trim()) {
-          errors.push({ field: `participants[${i}]`, message: 'Participant must have a display name or email.' });
-        }
+      if (Number.isFinite(scheduled.getTime()) && scheduled < minTime) {
+        errors.push({
+          field: 'scheduledStart',
+          message: 'Scheduled start must be at least 15 minutes in the future.',
+        });
       }
     }
 
     if (errors.length > 0) {
       return json({ error: 'validation_failed', errors }, { status: 400 });
     }
+
+    // Safe to read fields now that the validator passed.
+    const { title, description, clientOrOrganization, participants } = body as Record<string, any>;
 
     // Apply updates
     if (title !== undefined) meeting.title = title.trim();

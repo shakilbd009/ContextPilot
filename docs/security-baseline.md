@@ -56,6 +56,33 @@ This document defines the security baseline for all implementation work. Deviati
 - **CSRF protection**: Double-submit cookie pattern for state-changing operations
 - **Rate limiting**: 100 req/min per user; burst 150
 
+### Import endpoint rate limit (CWE-770 — production baseline)
+
+`POST /api/v1/meetings` (manual meeting import) is rate-limited per client IP. The values below are the **production baseline**; they live as named constants in `backend/internal/config/config.go` (`DefaultRateLimitImportMaxRequests`, `DefaultRateLimitImportWindowSecs`) and must be kept in sync with `docker-compose.yml` and `.env.example`.
+
+| Env var | Default | Production value |
+|---|---|---|
+| `RATE_LIMIT_IMPORT_MAX_REQUESTS` | 100 | 100 |
+| `RATE_LIMIT_IMPORT_WINDOW_SECS` | 60 | 60 |
+
+**Operator rules (enforced by `config.rateLimitOrDefault` and the gate in `cmd/server/main.go`):**
+- Setting the env var to `0` (or leaving it unset) does **not** disable the limiter — it falls back to the documented default. This prevents a drift regression like the one observed in audit `t_6cc2471a` (2026-06-01) where the running process had `RATE_LIMIT_IMPORT_MAX_REQUESTS=0` and the middleware was never installed.
+- To explicitly disable the limiter (incident-response escape hatch), set the value to a negative number. The server logs a `WARN` on startup when it sees a negative value, so the disablement is observable.
+- A `0` reaching the `main.go` gate (which should be impossible after the config-load fix) is logged at `WARN` level.
+
+**Verifying in production / local:**
+```bash
+ps eww -p <pid> | tr ' ' '\n' | grep RATE_LIMIT
+# Expect: RATE_LIMIT_IMPORT_MAX_REQUESTS=100, RATE_LIMIT_IMPORT_WINDOW_SECS=60
+curl -sS -D - -o /dev/null -X POST http://localhost:8080/api/v1/meetings \
+  -H "X-User-ID: smoke-$(uuidgen)" \
+  -H "X-Forwarded-For: 198.51.100.7" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"smoke","completedAt":"2026-06-01T10:00:00Z","participants":[{"displayName":"T"}],"transcript":"x","idempotencyToken":"00000000-0000-0000-0000-000000000001"}'
+# Expect: X-RateLimit-Limit: 100, X-RateLimit-Remaining: 99, 201 Created
+```
+
+
 ---
 
 ## Authorization
