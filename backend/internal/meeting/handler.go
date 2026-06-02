@@ -3,6 +3,7 @@ package meeting
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,11 +13,35 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
 	"github.com/contextpilot/backend/internal/memory"
 )
+
+// sanitizeDBError returns a redacted error string suitable for server logs.
+// It strips the raw pgx/pgconn error message (which can include column names,
+// table names, SQL fragments, and other schema-revealing information) and
+// returns only a stable error type + SQLSTATE code. The original error is
+// preserved internally for HTTP status mapping and metrics; only the log
+// line is sanitized to mitigate CWE-209 (Generation of Error Message
+// Containing Sensitive Information).
+//
+// For *pgconn.PgError, returns "pgx.PgError(sqlstate=XXXXX)" where XXXXX is
+// the 5-character SQLSTATE category (e.g. "42703" for undefined_column).
+// For any other error, returns the Go type name via fmt.Sprintf("%T", err).
+// For nil, returns an empty string.
+func sanitizeDBError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return fmt.Sprintf("pgx.PgError(sqlstate=%s)", pgErr.Code)
+	}
+	return fmt.Sprintf("%T", err)
+}
 
 // FeatureFlagEnv is the server-side env var for the manual meeting import flag.
 const FeatureFlagEnv = "FF_ENABLE_MANUAL_MEETING_IMPORT"
@@ -457,7 +482,13 @@ func handleUpdateMeeting(log *zerolog.Logger) http.HandlerFunc {
 		// Perform update; hasChanges is true if watched source fields changed
 		hasChanges, err := repo.UpdateMeeting(r.Context(), id, in.Title, completedAt, in.Transcript, in.Notes, in.Participants)
 		if err != nil {
-			log.Error().Err(err).Msg("failed to update meeting")
+			// Sanitize error to avoid leaking column names, table names, or
+			// SQL fragments in the server log (CWE-209). The HTTP response
+			// body remains a generic 500 — only the log line is redacted.
+			log.Error().
+				Str("meetingId", id.String()).
+				Str("errorType", sanitizeDBError(err)).
+				Msg("failed to update meeting")
 			http.Error(w, `{"type":"about:blank","title":"Internal Server Error","status":500}`, http.StatusInternalServerError)
 			return
 		}
