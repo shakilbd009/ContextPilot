@@ -46,6 +46,7 @@ type MeetingRepository interface {
 	CreateMeeting(ctx context.Context, title string, completedAt time.Time, transcript, notes *string, contentSource string, createdBy uuid.UUID, participants []ParticipantInput, idempotencyToken uuid.UUID) (uuid.UUID, error)
 	ListMeetings(ctx context.Context, createdBy uuid.UUID, limit, offset int) ([]Meeting, error)
 	GetMeeting(ctx context.Context, id uuid.UUID) (*Meeting, error)
+	GetMeetingOwned(ctx context.Context, id, userID uuid.UUID) (*Meeting, error) // IDOR-FIX-CWE-639
 	UpdateMeeting(ctx context.Context, meetingID uuid.UUID, title *string, completedAt *time.Time, transcript, notes *string, participants []ParticipantInput) (bool, error)
 }
 
@@ -333,10 +334,19 @@ func handleListMeetings(log *zerolog.Logger) http.HandlerFunc {
 }
 
 // handleGetMeeting handles GET /meetings/{id}
+// Authorization: the requester must own the meeting. Cross-tenant reads return
+// 404 (NOT 403) so the existence of a meeting is never disclosed to a non-owner.
+// Mirrors the ownership check in handleUpdateMeeting (line ~416).
+// IDOR-FIX-CWE-639
 func handleGetMeeting(log *zerolog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userIDStr := strings.TrimSpace(r.Header.Get("X-User-ID"))
 		if userIDStr == "" {
+			http.Error(w, `{"type":"about:blank","title":"Unauthorized","status":401}`, http.StatusUnauthorized)
+			return
+		}
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
 			http.Error(w, `{"type":"about:blank","title":"Unauthorized","status":401}`, http.StatusUnauthorized)
 			return
 		}
@@ -355,7 +365,9 @@ func handleGetMeeting(log *zerolog.Logger) http.HandlerFunc {
 			return
 		}
 
-		meeting, err := repo.GetMeeting(r.Context(), id)
+		// Owner-aware read: returns ErrNotFound for both "missing" and
+		// "exists but owned by a different user". Caller maps to 404.
+		meeting, err := repo.GetMeetingOwned(r.Context(), id, userID)
 		if err != nil {
 			if err == ErrNotFound {
 				http.Error(w, `{"type":"about:blank","title":"Not Found","status":404,"detail":"Meeting not found"}`, http.StatusNotFound)

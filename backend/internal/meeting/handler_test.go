@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,18 @@ func (m *mockRepo) GetMeeting(ctx context.Context, id uuid.UUID) (*Meeting, erro
 		return meeting, nil
 	}
 	return nil, ErrNotFound
+}
+
+func (m *mockRepo) GetMeetingOwned(ctx context.Context, id, userID uuid.UUID) (*Meeting, error) {
+	meeting, ok := m.meetings[id]
+	if !ok || meeting.CreatedBy != userID {
+		// Collapsed into a single ErrNotFound so the handler cannot distinguish
+		// "does not exist" from "exists but owned by someone else" — same as
+		// the SQL repository, which relies on pgx.ErrNoRows for both cases.
+		// IDOR-FIX-CWE-639
+		return nil, ErrNotFound
+	}
+	return meeting, nil
 }
 
 func (m *mockRepo) UpdateMeeting(ctx context.Context, meetingID uuid.UUID, title *string, completedAt *time.Time, transcript, notes *string, participants []ParticipantInput) (bool, error) {
@@ -406,18 +419,19 @@ func TestGetMeeting_NotFound(t *testing.T) {
 func TestGetMeeting_Success(t *testing.T) {
 	repo := newMockRepo()
 	meetingID := uuid.New()
+	ownerID := uuid.New() // IDOR-FIX-CWE-639
 	repo.meetings[meetingID] = &Meeting{
 		ID:          meetingID,
 		Title:       "Found Meeting",
 		CompletedAt: time.Now(),
-		CreatedBy:   uuid.New(),
+		CreatedBy:   ownerID, // IDOR-FIX-CWE-639
 		Participants: []Participant{},
 	}
 
 	r := buildTestRouterWithFF(repo, "true")
 
 	req := httptest.NewRequest(http.MethodGet, "/"+meetingID.String(), nil)
-	req.Header.Set("X-User-ID", uuid.New().String())
+	req.Header.Set("X-User-ID", ownerID.String()) // IDOR-FIX-CWE-639
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -431,6 +445,92 @@ func TestGetMeeting_Success(t *testing.T) {
 	}
 	if resp.Title != "Found Meeting" {
 		t.Errorf("Title = %q, want %q", resp.Title, "Found Meeting")
+	}
+}
+
+// TestGetMeeting_OwnerCheck is the regression test for CWE-639 (IDOR on
+// GET /api/v1/meetings/{id}). A non-owner MUST receive 404 (not 403, not 200)
+// and the response body MUST NOT contain the secret transcript or the owner's
+// createdBy — i.e. no existence or content leak.
+func TestGetMeeting_OwnerCheck(t *testing.T) {
+	repo := newMockRepo()
+	meetingID := uuid.New()
+	ownerID := uuid.New()
+	attackerID := uuid.New()
+	secretTranscript := "secret transcript content for idor-regression"
+	secretNotes := "private notes that must never leak cross-tenant"
+	repo.meetings[meetingID] = &Meeting{
+		ID:            meetingID,
+		Title:         "final-idor-verify",
+		CompletedAt:   time.Now(),
+		Transcript:    strPtr(secretTranscript),
+		Notes:         strPtr(secretNotes),
+		ContentSource: "manual",
+		CreatedBy:     ownerID,
+		Participants:  []Participant{},
+	}
+
+	r := buildTestRouterWithFF(repo, "true")
+
+	// 1. Owner (User A) reads their own meeting -> 200 with full body.
+	req := httptest.NewRequest(http.MethodGet, "/"+meetingID.String(), nil)
+	req.Header.Set("X-User-ID", ownerID.String())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("owner GET: status = %d, want %d. body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	ownerBody := w.Body.String()
+	if !strings.Contains(ownerBody, secretTranscript) {
+		t.Errorf("owner body missing transcript: %s", ownerBody)
+	}
+	if !strings.Contains(ownerBody, secretNotes) {
+		t.Errorf("owner body missing notes: %s", ownerBody)
+	}
+	if !strings.Contains(ownerBody, ownerID.String()) {
+		t.Errorf("owner body missing owner createdBy: %s", ownerBody)
+	}
+
+	// 2. Attacker (User B) reads User A's meeting -> 404, body MUST NOT leak
+	//    transcript, notes, or createdBy.
+	req2 := httptest.NewRequest(http.MethodGet, "/"+meetingID.String(), nil)
+	req2.Header.Set("X-User-ID", attackerID.String())
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusNotFound {
+		t.Fatalf("attacker GET: status = %d, want %d. body: %s", w2.Code, http.StatusNotFound, w2.Body.String())
+	}
+	attackerBody := w2.Body.String()
+	if strings.Contains(attackerBody, secretTranscript) {
+		t.Errorf("IDOR LEAK: attacker body contains secret transcript: %s", attackerBody)
+	}
+	if strings.Contains(attackerBody, secretNotes) {
+		t.Errorf("IDOR LEAK: attacker body contains secret notes: %s", attackerBody)
+	}
+	if strings.Contains(attackerBody, ownerID.String()) {
+		t.Errorf("IDOR LEAK: attacker body contains owner createdBy: %s", attackerBody)
+	}
+	if strings.Contains(attackerBody, "final-idor-verify") {
+		t.Errorf("IDOR LEAK: attacker body contains meeting title: %s", attackerBody)
+	}
+
+	// 3. Unknown user (no X-User-ID) -> 401, before any DB lookup.
+	req3 := httptest.NewRequest(http.MethodGet, "/"+meetingID.String(), nil)
+	w3 := httptest.NewRecorder()
+	r.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusUnauthorized {
+		t.Errorf("no-auth GET: status = %d, want %d", w3.Code, http.StatusUnauthorized)
+	}
+
+	// 4. Malformed X-User-ID -> 401, before any DB lookup.
+	req4 := httptest.NewRequest(http.MethodGet, "/"+meetingID.String(), nil)
+	req4.Header.Set("X-User-ID", "not-a-uuid")
+	w4 := httptest.NewRecorder()
+	r.ServeHTTP(w4, req4)
+	if w4.Code != http.StatusUnauthorized {
+		t.Errorf("bad-auth GET: status = %d, want %d", w4.Code, http.StatusUnauthorized)
 	}
 }
 
