@@ -109,56 +109,70 @@ func internalError(w http.ResponseWriter) {
 	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`))
 }
 
-// Handler returns a chi router with memory API routes.
+// Handler returns a chi router with memory API routes. Use this when the
+// router is mounted at /api/v1 (the historical mount point) and the calling
+// service is responsible for ensuring the meeting mount at /api/v1/meetings
+// does not shadow these paths. Prefer RegisterRoutesOnRouter when nesting
+// memory routes under the meeting sub-router — that pattern is immune to
+// chi's longest-prefix-mount shadowing.
 func Handler(log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker) http.Handler {
 	r := chi.NewRouter()
+	RegisterRoutesOnRouter(r, log, pool, worker)
+	return r
+}
 
-	r.Use(WithRepository(pool))
+// RegisterRoutesOnRouter registers the memory API routes on the given parent
+// router. The routes are registered as /{id}/memory/... relative to the
+// parent, so the caller is responsible for scoping the parent appropriately
+// (e.g. meeting.HandlerWithSubRoute delegates a sub-router scoped at
+// /{id} so the full public path resolves to /api/v1/meetings/{id}/memory/...).
+//
+// This is the preferred mount pattern: registering memory routes inside the
+// meeting router lets chi's radix tree do longest-prefix matching at the
+// {id} node, so /{id}/memory/... reaches memory's handlers and /{id} still
+// reaches the meeting handler. The previous approach of mounting the memory
+// sub-router at /api/v1 was shadowed by the meeting mount at
+// /api/v1/meetings and never reached the memory handlers in production.
+func RegisterRoutesOnRouter(parent chi.Router, log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker) {
+	parent.Use(WithRepository(pool))
 	if worker != nil {
-		r.Use(WithWorker(worker))
+		parent.Use(WithWorker(worker))
 	}
 
 	// Feature flag gate + auth guard for all routes
-	r.Group(func(g chi.Router) {
+	parent.Group(func(g chi.Router) {
 		g.Use(func(next http.Handler) http.Handler {
-					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						start := time.Now()
-						enabled := isFeatureFlagEnabled()
-						FlagEvaluationMs.Observe(float64(time.Since(start).Milliseconds()))
-						if !enabled {
-							if detectFlagMisconfiguration(r) {
-								emitFlagMisconfiguration(log, r)
-							}
-							forbidden(w, "Meeting memory processing is not enabled. Set FF_ENABLE_MEETING_MEMORY_PROCESSING=true to activate.")
-							return
-						}
-						userID, ok := getUserID(r)
-						if !ok {
-							unauthorized(w)
-							return
-						}
-						ctx := context.WithValue(r.Context(), contextKey{}, userID)
-						next.ServeHTTP(w, r.WithContext(ctx))
-					})
-				})
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				start := time.Now()
+				enabled := isFeatureFlagEnabled()
+				FlagEvaluationMs.Observe(float64(time.Since(start).Milliseconds()))
+				if !enabled {
+					if detectFlagMisconfiguration(r) {
+						emitFlagMisconfiguration(log, r)
+					}
+					forbidden(w, "Meeting memory processing is not enabled. Set FF_ENABLE_MEETING_MEMORY_PROCESSING=true to activate.")
+					return
+				}
+				userID, ok := getUserID(r)
+				if !ok {
+					unauthorized(w)
+					return
+				}
+				ctx := context.WithValue(r.Context(), contextKey{}, userID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+			})
+		})
 
-		// GET /meetings/{id}/memory
-		r.Get("/meetings/{id}/memory", handleGetMemory(log))
-		// GET /meetings/{id}/memory/versions
-		r.Get("/meetings/{id}/memory/versions", handleListMemoryVersions(log))
-		// GET /meetings/{id}/memory/versions/{versionNumber}
-		r.Get("/meetings/{id}/memory/versions/{versionNumber}", handleGetMemoryVersion(log))
-		// POST /meetings/{id}/memory/reprocess
-		r.Post("/meetings/{id}/memory/reprocess", handleReprocessMemory(log))
-		// GET /meetings/{id}/memory/state
-		r.Get("/meetings/{id}/memory/state", handleGetMemoryState(log))
-		// GET /meetings/{id}/memory/conflicts
-		r.Get("/meetings/{id}/memory/conflicts", handleGetConflicts(log))
-		// POST /meetings/{id}/memory/conflicts/{conflictId}/resolve
-		r.Post("/meetings/{id}/memory/conflicts/{conflictId}/resolve", handleResolveConflict(log))
+		// Relative paths — the caller scopes the parent so these resolve to
+		// /api/v1/meetings/{id}/memory/... at the public URL.
+		g.Get("/memory", handleGetMemory(log))
+		g.Get("/memory/versions", handleListMemoryVersions(log))
+		g.Get("/memory/versions/{versionNumber}", handleGetMemoryVersion(log))
+		g.Post("/memory/reprocess", handleReprocessMemory(log))
+		g.Get("/memory/state", handleGetMemoryState(log))
+		g.Get("/memory/conflicts", handleGetConflicts(log))
+		g.Post("/memory/conflicts/{conflictId}/resolve", handleResolveConflict(log))
 	})
-
-	return r
 }
 
 func getUserIDFromContext(r *http.Request) uuid.UUID {
