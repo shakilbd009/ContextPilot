@@ -49,7 +49,7 @@ services:
       RATE_LIMIT_IMPORT_MAX_REQUESTS: "100"
       RATE_LIMIT_IMPORT_WINDOW_SECS: "60"
       ENVIRONMENT: development
-      FF_ENABLE_APP_SHELL: "false"
+      FF_ENABLE_APP_SHELL: "true"
       FF_ENABLE_UPCOMING_MEETINGS: "true"
       FF_ENABLE_MANUAL_MEETING_IMPORT: "true"
     depends_on:

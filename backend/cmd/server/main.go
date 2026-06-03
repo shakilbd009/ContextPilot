@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/contextpilot/backend/internal/appshell"
+	"github.com/contextpilot/backend/internal/auth"
 	"github.com/contextpilot/backend/internal/briefing"
 	"github.com/contextpilot/backend/internal/config"
 	"github.com/contextpilot/backend/internal/handler"
@@ -102,6 +103,9 @@ func main() {
 
 	// App shell routes — all gated by FF_ENABLE_APP_SHELL (defaults false).
 	r.Mount("/api/v1/appshell", appshell.Handler(&log.Logger))
+
+	// Auth routes — login, signup, logout. Gated by FF_ENABLE_APP_SHELL.
+	r.Mount("/api/v1/auth", auth.Handler(&log.Logger))
 
 	// Briefing background worker — starts when FF_ENABLE_PRE_CALL_BRIEFING=true.
 	// Worker goroutine is stopped via briefingWorker.Stop() during graceful shutdown.
