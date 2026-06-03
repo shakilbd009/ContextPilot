@@ -179,11 +179,11 @@ func main() {
 			}
 		}
 		r.Mount("/api/v1/meetings", meeting.HandlerWithSubRoute(&log.Logger, pool, importRateLimitMiddleware, mountSubRoute))
-		r.Mount("/api/v1/upcoming", upcoming.Handler(&log.Logger, pool))
 
 		// Briefing worker — gated by FF_ENABLE_PRE_CALL_BRIEFING (defaults false).
 		// Instantiates after BriefingService is ready to process jobs from
-		// briefing_processing_jobs queue.
+		// briefing_processing_jobs queue. Created BEFORE the upcoming router
+		// so we can pass the handler to upcoming's sub-route callback.
 		if briefing.IsFeatureFlagEnabled() {
 			// briefingSourceAdapter implements briefing.MeetingSourceRepo using the same pool,
 			// bridging the briefing service's source-selection queries to the meeting tables.
@@ -198,14 +198,27 @@ func main() {
 			)
 			// ARCH_OK: server-lifetime context for background worker startup — same pattern as pgxpool.New
 			briefingWorker.Start(context.Background())
-			// Briefing handler registers routes as /upcoming/{meetingId}/briefing/...
-			// internally, so the mount point is /api/v1 (not /api/v1/upcoming).
-			// Mounting at /api/v1/upcoming would (a) duplicate the upcoming mount
-			// above and panic at startup if PRE_CALL_BRIEFING and UPCOMING_MEETINGS
-			// are both enabled, and (b) produce wrong paths like
-			// /api/v1/upcoming/upcoming/{meetingId}/briefing.
-			r.Mount("/api/v1", briefing.Handler(&log.Logger, pool, briefingWorker))
 		}
+
+		// Build the upcoming router and nest the briefing sub-router when the
+		// briefing feature flag is on. This solves chi's route-shadowing problem:
+		// mounting briefing at /api/v1 (outside upcoming) would shadow every
+		// /api/v1/upcoming/{meetingId}/briefing/... request (404) because chi's
+		// radix tree matches the more-specific /api/v1/upcoming mount first and
+		// the briefing handler is never reached. By registering briefing paths
+		// directly on the upcoming router (not inside a Route sub-scope), both
+		// upcoming and briefing routes coexist without shadowing.
+		var upcomingSubRoute func(chi.Router)
+		if briefingWorker != nil {
+			upcomingSubRoute = func(r chi.Router) {
+				// Register briefing paths directly on the upcoming router at
+				// /{meetingId}/briefing/... so both upcoming ({id}, /{id}/cancel)
+				// and briefing coexist without chi's Route sub-scope causing
+				// path-segment duplication (which produces 404).
+				briefing.RegisterRoutesOnRouter(r, &log.Logger, pool, briefingWorker)
+			}
+		}
+		r.Mount("/api/v1/upcoming", upcoming.HandlerWithSubRoute(&log.Logger, pool, upcomingSubRoute))
 	}
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)

@@ -520,15 +520,11 @@ func TestRepository_IsMemoryStale_NotProcessed(t *testing.T) {
 	meetingID := uuid.New()
 	now := time.Now()
 
-	// hasActive=false → not stale
+	// hasActive=false, versionCreatedAt is NULL
 	pool := &mockPool{
 		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
-			return &mockRow{scanFn: func(dest ...any) error {
-				*dest[0].(*time.Time) = now
-				*dest[1].(*time.Time) = now.Add(-1 * time.Hour)
-				*dest[2].(*bool) = false // no active version
-				return nil
-			}}
+			// Use values + assignValue so nil is handled by *time.Time nil case
+			return &mockRow{values: []any{now, nil, false}}
 		},
 	}
 	repo := &Repository{pool: pool}
@@ -541,20 +537,37 @@ func TestRepository_IsMemoryStale_NotProcessed(t *testing.T) {
 	}
 }
 
+func TestRepository_IsMemoryStale_NullCreatedAt(t *testing.T) {
+	// When hasActive=true but mv.created_at is NULL (edge case: version row exists
+	// but created_at was never set), IsMemoryStale must return false, not crash.
+	meetingID := uuid.New()
+	now := time.Now()
+
+	pool := &mockPool{
+		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+			return &mockRow{values: []any{now, nil, true}}
+		},
+	}
+	repo := &Repository{pool: pool}
+	stale, err := repo.IsMemoryStale(context.Background(), meetingID)
+	if err != nil {
+		t.Errorf("IsMemoryStale unexpected error: %v", err)
+	}
+	if stale {
+		t.Error("IsMemoryStale = true, want false when created_at is NULL even with hasActive=true")
+	}
+}
+
 func TestRepository_IsMemoryStale_Fresh(t *testing.T) {
 	meetingID := uuid.New()
 	versionCreated := time.Now().Add(-1 * time.Hour)
 	meetingUpdated := time.Now().Add(-30 * time.Minute)
 
+	// Scan dest order: updatedAt (*time.Time), versionCreatedAt (*time.Time), hasActive (*bool)
+	// versionCreated is older than meetingUpdated → not stale
 	pool := &mockPool{
 		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
-			return &mockRow{scanFn: func(dest ...any) error {
-// Scan dest order: updatedAt, versionCreatedAt, hasActive
-	*dest[0].(*time.Time) = versionCreated // version.created_at (older)
-	*dest[1].(*time.Time) = meetingUpdated // meeting.updated_at (newer)
-				*dest[2].(*bool) = true
-				return nil
-			}}
+			return &mockRow{values: []any{versionCreated, meetingUpdated, true}}
 		},
 	}
 	repo := &Repository{pool: pool}
@@ -572,14 +585,11 @@ func TestRepository_IsMemoryStale_Stale(t *testing.T) {
 	versionCreated := time.Now().Add(-1 * time.Hour)
 	meetingUpdated := time.Now()
 
+	// Scan dest order: updatedAt (*time.Time), versionCreatedAt (*time.Time), hasActive (*bool)
+	// meetingUpdated is newer than versionCreated → stale
 	pool := &mockPool{
 		queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
-			return &mockRow{scanFn: func(dest ...any) error {
-				*dest[0].(*time.Time) = meetingUpdated  // meeting.updated_at (newer)
-				*dest[1].(*time.Time) = versionCreated // version.created_at (older)
-				*dest[2].(*bool) = true
-				return nil
-			}}
+			return &mockRow{values: []any{meetingUpdated, versionCreated, true}}
 		},
 	}
 	repo := &Repository{pool: pool}

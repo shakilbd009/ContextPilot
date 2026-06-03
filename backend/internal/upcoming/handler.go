@@ -29,6 +29,7 @@ const BrowserFlagHeader = "X-Browser-FF-Upcoming-Meetings"
 
 type contextKey struct{}
 type poolKey     struct{}
+type authContextKey struct{}
 
 // WithRepository injects the upcoming repository into the request context.
 func WithRepository(pool *pgxpool.Pool) func(http.Handler) http.Handler {
@@ -123,6 +124,20 @@ func detectFlagMisconfiguration(r *http.Request) bool {
 
 // Handler returns a chi router with upcoming meeting CRUD routes.
 func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
+	return HandlerWithSubRoute(log, pool, nil)
+}
+
+// HandlerWithSubRoute returns a chi router with upcoming meeting CRUD routes.
+// If mountSubRoute is non-nil, it is called with the router after all upcoming
+// routes are registered, allowing the caller to mount sub-routes that share the
+// /api/v1/upcoming prefix without being shadowed. Specifically, the briefing
+// handler (which registers /upcoming/{meetingId}/briefing/...) is mounted here
+// so it receives requests before the flag-mismatch guard in upcoming's group
+// runs. The pattern solves chi's longest-prefix mount shadowing: if briefing
+// were mounted at /api/v1 (outside and below upcoming's mount), every request
+// to /api/v1/upcoming/{meetingId}/briefing/... would be captured by upcoming's
+// mount and return 404 with no chance for briefing's handlers to run.
+func HandlerWithSubRoute(log *zerolog.Logger, pool *pgxpool.Pool, mountSubRoute func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 
 	// Inject repository into context so every route can call getRepository(r).
@@ -168,6 +183,10 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
 		g.Patch("/{id}", handleUpdateUpcomingMeeting(log))
 		g.Post("/{id}/cancel", handleCancelUpcomingMeeting(log))
 	})
+
+	if mountSubRoute != nil {
+		mountSubRoute(r)
+	}
 
 	return r
 }

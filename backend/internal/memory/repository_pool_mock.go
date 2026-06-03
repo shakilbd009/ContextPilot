@@ -221,6 +221,10 @@ func assignValue(dest, v any) error {
 			*d = int(val)
 		}
 	case *time.Time:
+		if v == nil {
+			// Leave nil for NULL scans into *time.Time
+			return nil
+		}
 		switch val := v.(type) {
 		case time.Time:
 			*d = val

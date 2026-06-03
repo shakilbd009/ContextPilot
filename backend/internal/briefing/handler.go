@@ -21,6 +21,12 @@ import (
 // contextKey is a private type to avoid context key collisions.
 type contextKey struct{}
 
+// workerContextKey is used for the background worker, separate from
+// the repository context key to avoid context key collision where both
+// WithRepository and WithWorker write to contextKey{} — the worker would
+// shadow the repository and getRepository would return nil.
+type workerContextKey struct{}
+
 // WithRepository injects the briefing repository into the request context.
 func WithRepository(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	repo := NewRepository(pool)
@@ -39,7 +45,7 @@ type poolKey struct{}
 func WithWorker(w *Worker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := context.WithValue(r.Context(), contextKey{}, w)
+			ctx := context.WithValue(r.Context(), workerContextKey{}, w)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -55,7 +61,7 @@ func getRepository(r *http.Request) *Repository {
 }
 
 func getWorker(r *http.Request) *Worker {
-	if v := r.Context().Value(contextKey{}); v != nil {
+	if v := r.Context().Value(workerContextKey{}); v != nil {
 		if w, ok := v.(*Worker); ok {
 			return w
 		}
@@ -105,8 +111,100 @@ func internalError(w http.ResponseWriter) {
 	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500}`))
 }
 
+// userContextKey is used by production auth middleware to store the authenticated
+// userID without colliding with the repository/worker context keys used by
+// WithRepository/WithWorker. This mirrors the pattern in internal/memory/handler.go.
+type userContextKey struct{}
+
 // Handler returns a chi router with briefing API routes.
+// The router registers its routes at the root (relative to its mount point),
+// so mounting at "/api/v1" produces "/api/v1/{meetingId}/briefing/...".
+// For mounting inside another chi router (e.g., as a sub-route of upcoming),
+// use RegisterRoutesOnRouter instead.
 func Handler(log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker) http.Handler {
+	return HandlerWithSubRoute(log, pool, worker, nil)
+}
+
+// RegisterRoutesOnRouter registers the briefing API routes on the given parent
+// chi.Router at paths relative to the parent's mount point. This allows the
+// caller to scope briefing routes under a specific path prefix (e.g.,
+// /api/v1/upcoming/{meetingId}/briefing/...) using chi's Route pattern.
+//
+// Example (matching main.go wiring):
+//
+//   upcomingRouter.Route("/{meetingId}/briefing", func(br chi.Router) {
+//       briefing.RegisterRoutesOnRouter(br, log, pool, worker)
+//   })
+//
+// The registered paths are:
+//   /{meetingId}/briefing
+//   /{meetingId}/briefing/versions
+//   /{meetingId}/briefing/versions/{versionNumber}
+//   /{meetingId}/briefing/sources
+//   /{meetingId}/briefing/sources/{sourceId}/exclude
+//   /{meetingId}/briefing/sources/{sourceId}/restore
+//
+// This pattern solves chi's mount shadowing problem: by registering routes
+// directly on the sub-router (not via nested Mount which breaks chi's prefix
+// stripping), both upcoming and briefing paths coexist without shadowing.
+func RegisterRoutesOnRouter(parent chi.Router, log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker) {
+	parent.Use(WithRepository(pool))
+	if worker != nil {
+		parent.Use(WithWorker(worker))
+	}
+
+	// Feature flag gate + auth guard for all routes
+	parent.Group(func(g chi.Router) {
+		g.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				serverEnv := os.Getenv(FeatureFlagEnv)
+				enabled := IsFeatureFlagEnabled()
+				if !enabled {
+					if detectFlagMisconfiguration(r, serverEnv) {
+						emitFlagMisconfiguration(log, r, FeatureFlagEnv, serverEnv)
+					}
+					forbidden(w, "Pre-call briefing is not enabled. Set FF_ENABLE_PRE_CALL_BRIEFING=true to activate.")
+					return
+				}
+				userID, ok := getUserID(r)
+				if !ok {
+					unauthorized(w)
+					return
+				}
+				ctx := context.WithValue(r.Context(), userContextKey{}, userID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+			})
+		})
+
+		// GET /{meetingId}/briefing
+		g.Get("/{meetingId}/briefing", handleGetBriefing(log))
+		// GET /{meetingId}/briefing/versions
+		g.Get("/{meetingId}/briefing/versions", handleListBriefingVersions(log))
+		// GET /{meetingId}/briefing/versions/{versionNumber}
+		g.Get("/{meetingId}/briefing/versions/{versionNumber}", handleGetBriefingVersion(log))
+		// POST /{meetingId}/briefing/regenerate
+		g.Post("/{meetingId}/briefing/regenerate", handleRegenerateBriefing(log))
+		// GET /{meetingId}/briefing/sources — FR-17: excluded/restored source visibility
+		g.Get("/{meetingId}/briefing/sources", handleGetBriefingSources(log))
+		// POST /{meetingId}/briefing/sources/{sourceId}/exclude
+		g.Post("/{meetingId}/briefing/sources/{sourceId}/exclude", handleExcludeSource(log))
+		// POST /{meetingId}/briefing/sources/{sourceId}/restore
+		g.Post("/{meetingId}/briefing/sources/{sourceId}/restore", handleRestoreSource(log))
+	})
+}
+
+// HandlerWithSubRoute returns a chi router with briefing API routes.
+// If mountSubRoute is non-nil, it is called with the router after all briefing
+// routes are registered, allowing the caller to mount additional sub-routes
+// (e.g., memory or briefing sub-routes) at paths that are shadowed by the
+// briefing router's /{meetingId}/... routes. When mountSubRoute is nil, this
+// is identical to Handler.
+//
+// For callers mounting briefing inside another chi router (e.g., as a sub-route
+// of upcoming), prefer RegisterRoutesOnRouter which registers routes directly
+// on the parent router rather than via nested Mount which causes chi's prefix
+// stripping to break the routing.
+func HandlerWithSubRoute(log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker, mountSubRoute func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(WithRepository(pool))
@@ -115,6 +213,13 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker) http.Handl
 	}
 
 	// Feature flag gate + auth guard for all routes
+	// Routes are registered relative to the router's mount point.
+	// When mounted at "/api/v1" (standalone), paths become:
+	//   /api/v1/upcoming/{meetingId}/briefing/...
+	// When mounted via Route("/{meetingId}/briefing", ...) inside another
+	// router, paths become /api/v1/upcoming/{meetingId}/briefing/... which is
+	// the correct public URL. Using relative paths (no "/upcoming" prefix)
+	// allows both mounting patterns to work without path duplication.
 	r.Group(func(g chi.Router) {
 		g.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,26 +237,30 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool, worker *Worker) http.Handl
 					unauthorized(w)
 					return
 				}
-				ctx := context.WithValue(r.Context(), contextKey{}, userID)
+				ctx := context.WithValue(r.Context(), userContextKey{}, userID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 			})
 		})
 
-		// GET /upcoming/{meetingId}/briefing
-		g.Get("/upcoming/{meetingId}/briefing", handleGetBriefing(log))
-		// GET /upcoming/{meetingId}/briefing/versions
-		g.Get("/upcoming/{meetingId}/briefing/versions", handleListBriefingVersions(log))
-		// GET /upcoming/{meetingId}/briefing/versions/{versionNumber}
-		g.Get("/upcoming/{meetingId}/briefing/versions/{versionNumber}", handleGetBriefingVersion(log))
-		// POST /upcoming/{meetingId}/briefing/regenerate
-		g.Post("/upcoming/{meetingId}/briefing/regenerate", handleRegenerateBriefing(log))
-		// GET /upcoming/{meetingId}/briefing/sources — FR-17: excluded/restored source visibility
-		g.Get("/upcoming/{meetingId}/briefing/sources", handleGetBriefingSources(log))
-		// POST /upcoming/{meetingId}/briefing/sources/{sourceId}/exclude
-		g.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/exclude", handleExcludeSource(log))
-		// POST /upcoming/{meetingId}/briefing/sources/{sourceId}/restore
-		g.Post("/upcoming/{meetingId}/briefing/sources/{sourceId}/restore", handleRestoreSource(log))
+		// GET /{meetingId}/briefing
+		g.Get("/{meetingId}/briefing", handleGetBriefing(log))
+		// GET /{meetingId}/briefing/versions
+		g.Get("/{meetingId}/briefing/versions", handleListBriefingVersions(log))
+		// GET /{meetingId}/briefing/versions/{versionNumber}
+		g.Get("/{meetingId}/briefing/versions/{versionNumber}", handleGetBriefingVersion(log))
+		// POST /{meetingId}/briefing/regenerate
+		g.Post("/{meetingId}/briefing/regenerate", handleRegenerateBriefing(log))
+		// GET /{meetingId}/briefing/sources — FR-17: excluded/restored source visibility
+		g.Get("/{meetingId}/briefing/sources", handleGetBriefingSources(log))
+		// POST /{meetingId}/briefing/sources/{sourceId}/exclude
+		g.Post("/{meetingId}/briefing/sources/{sourceId}/exclude", handleExcludeSource(log))
+		// POST /{meetingId}/briefing/sources/{sourceId}/restore
+		g.Post("/{meetingId}/briefing/sources/{sourceId}/restore", handleRestoreSource(log))
 	})
+
+	if mountSubRoute != nil {
+		mountSubRoute(r)
+	}
 
 	return r
 }

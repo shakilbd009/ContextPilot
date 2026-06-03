@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"html"
 	"net/http"
 	"os"
@@ -21,10 +20,18 @@ import (
 // contextKey is a private type to avoid context key collisions.
 type contextKey struct{}
 
+// workerContextKey is used for the background worker, separate from
+// the repository context key to avoid chi Logger middleware collision.
+type workerContextKey struct{}
+
+// userContextKey is used by production auth middleware to store the authenticated
+// userID without colliding with the Repository context key used by WithRepository.
+// This avoids the prior collision where both repo and userID used contextKey{},
+// causing getRepository to return nil after auth middleware wrote the userID.
+type userContextKey struct{}
+
 // authContextKey is used by test router to store userID without colliding
 // with the Repository context key used by WithRepository/WithWorker.
-// Production code uses contextKey{} for both (a collision), but handlers
-// never call getRepository after auth middleware runs, so this works.
 // In test router we need both values accessible simultaneously.
 type authContextKey struct{}
 
@@ -43,7 +50,7 @@ func WithRepository(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 func WithWorker(w *Worker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := context.WithValue(r.Context(), contextKey{}, w)
+			ctx := context.WithValue(r.Context(), workerContextKey{}, w)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -59,7 +66,7 @@ func getRepository(r *http.Request) *Repository {
 }
 
 func getWorker(r *http.Request) *Worker {
-	if v := r.Context().Value(contextKey{}); v != nil {
+	if v := r.Context().Value(workerContextKey{}); v != nil {
 		if w, ok := v.(*Worker); ok {
 			return w
 		}
@@ -158,7 +165,7 @@ func RegisterRoutesOnRouter(parent chi.Router, log *zerolog.Logger, pool *pgxpoo
 					unauthorized(w)
 					return
 				}
-				ctx := context.WithValue(r.Context(), contextKey{}, userID)
+				ctx := context.WithValue(r.Context(), userContextKey{}, userID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 			})
 		})
@@ -176,12 +183,13 @@ func RegisterRoutesOnRouter(parent chi.Router, log *zerolog.Logger, pool *pgxpoo
 }
 
 func getUserIDFromContext(r *http.Request) uuid.UUID {
-	if v := r.Context().Value(contextKey{}); v != nil {
+	// Production auth middleware uses userContextKey{}
+	if v := r.Context().Value(userContextKey{}); v != nil {
 		if id, ok := v.(uuid.UUID); ok {
 			return id
 		}
 	}
-	// Also check authContextKey (used by test router to avoid repo/userID collision)
+	// Fallback: check authContextKey (used by test router)
 	if v := r.Context().Value(authContextKey{}); v != nil {
 		if id, ok := v.(uuid.UUID); ok {
 			return id
@@ -220,7 +228,6 @@ func handleGetMemory(log *zerolog.Logger) http.HandlerFunc {
 
 		// Get active version
 		version, err := repo.GetActiveVersion(r.Context(), meetingID)
-		fmt.Printf("DEBUG GetMemory: after GetActiveVersion version=%p err=%v\n", version, err)
 		if err != nil {
 			internalError(w)
 			return
@@ -231,12 +238,11 @@ func handleGetMemory(log *zerolog.Logger) http.HandlerFunc {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					fmt.Printf("PANIC in GetProcessingState: %v\n", r)
+					log.Error().Interface("panic", r).Msg("GetProcessingState panicked")
 				}
 			}()
 			state, err = repo.GetProcessingState(r.Context(), meetingID)
 		}()
-		fmt.Printf("DEBUG GetMemory: after GetProcessingState state=%p err=%v\n", state, err)
 		if err != nil || state == nil {
 			internalError(w)
 			return
@@ -246,7 +252,6 @@ func handleGetMemory(log *zerolog.Logger) http.HandlerFunc {
 		var priorMemories []PriorMemorySummary
 		if version != nil {
 			priorMemories, err = repo.ListPriorMemoryInputs(r.Context(), version.ID)
-			fmt.Printf("DEBUG GetMemory: after ListPriorMemoryInputs priorMemories=%d err=%v\n", len(priorMemories), err)
 			if priorMemories == nil {
 				priorMemories = []PriorMemorySummary{}
 			}
@@ -274,7 +279,6 @@ func handleGetMemory(log *zerolog.Logger) http.HandlerFunc {
 			resp.CreatedAt = version.CreatedAt
 		}
 
-		fmt.Printf("DEBUG GetMemory: responding with status=%s state=%s version=%p\n", resp.Status, resp.ProcessingState, version)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(resp)

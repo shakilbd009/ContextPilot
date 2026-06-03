@@ -36,5 +36,6 @@ docker/data/
 # Misc
 *.log
 tmp/
-temp/.hermes-worktrees/
+.hermes-worktrees/
 .wip-stash-dir/
+.hermes*

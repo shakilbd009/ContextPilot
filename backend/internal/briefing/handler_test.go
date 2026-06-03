@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -267,13 +268,13 @@ var briefingFFDisabledRoutes = []struct {
 	method string
 	path   string
 }{
-	{"GetBriefing", http.MethodGet, "/upcoming/{mid}/briefing"},
-	{"ListVersions", http.MethodGet, "/upcoming/{mid}/briefing/versions"},
-	{"GetVersion", http.MethodGet, "/upcoming/{mid}/briefing/versions/{n}"},
-	{"Regenerate", http.MethodPost, "/upcoming/{mid}/briefing/regenerate"},
-	{"GetSources", http.MethodGet, "/upcoming/{mid}/briefing/sources"},
-	{"ExcludeSource", http.MethodPost, "/upcoming/{mid}/briefing/sources/{sid}/exclude"},
-	{"RestoreSource", http.MethodPost, "/upcoming/{mid}/briefing/sources/{sid}/restore"},
+	{"GetBriefing", http.MethodGet, "/{mid}/briefing"},
+	{"ListVersions", http.MethodGet, "/{mid}/briefing/versions"},
+	{"GetVersion", http.MethodGet, "/{mid}/briefing/versions/{n}"},
+	{"Regenerate", http.MethodPost, "/{mid}/briefing/regenerate"},
+	{"GetSources", http.MethodGet, "/{mid}/briefing/sources"},
+	{"ExcludeSource", http.MethodPost, "/{mid}/briefing/sources/{sid}/exclude"},
+	{"RestoreSource", http.MethodPost, "/{mid}/briefing/sources/{sid}/restore"},
 }
 
 func substituteBriefingPathParams(t *testing.T, tmpl string) string {
@@ -294,6 +295,94 @@ func buildBriefingRouter(t *testing.T) http.Handler {
 	// Silence logger output during tests.
 	logger := zerolog.New(os.Stdout).Level(zerolog.Disabled)
 	return Handler(&logger, nil, nil)
+}
+
+// TestRouter_BriefingNotShadowed verifies that the briefing router is reachable
+// when mounted as a sub-router of an upstream chi router, and is not shadowed
+// by the upstream mount. This is a regression test for the bug found in live
+// retest t_c3df48cd: mounting briefing at /api/v1 (outside upcoming) caused
+// chi's radix tree to match /api/v1/upcoming first and shadow every
+// /api/v1/upcoming/{id}/briefing/... request (404), making the entire briefing
+// feature unreachable when FF_ENABLE_UPCOMING_MEETINGS=true.
+//
+// The fix registers briefing paths directly on the upcoming router (not
+// inside a Route sub-scope) using RegisterRoutesOnRouter. This avoids chi's
+// path-segment duplication that occurs when Route("/{x}/y", ...) nests another
+// pattern with {x} on the sub-router — chi re-parses the segment and produces
+// a path like /{x}/y/{x}/y which doesn't match any real request (404).
+//
+// Pattern (CORRECT):
+//   upcomingRouter.Group(func(g chi.Router) {
+//       RegisterRoutesOnRouter(g, log, pool, worker)  // g.Get("/{id}/briefing", ...)
+//   })
+//
+// Anti-pattern (BROKEN - produces 404):
+//   upcomingRouter.Route("/{id}/briefing", func(br chi.Router) {
+//       RegisterRoutesOnRouter(br, log, pool, worker)  // br.Get("/{id}/briefing", ...) → path duplication
+//   })
+//
+// Test strategy: create a parent chi router, register briefing routes directly
+// on it (simulating the correct upcoming router wiring), send requests to
+// briefing paths, and assert they are NOT 404 (expected: 403 when flag is off).
+func TestRouter_BriefingNotShadowed(t *testing.T) {
+	// Silence logger output during tests.
+	logger := zerolog.New(os.Stdout).Level(zerolog.Disabled)
+
+	// Simulate main.go wiring: briefing paths are registered directly on the
+	// upcoming router (via RegisterRoutesOnRouter), NOT inside a Route sub-scope.
+	// Direct registration avoids chi's path-segment duplication that causes 404.
+	parentRouter := chi.NewRouter()
+	RegisterRoutesOnRouter(parentRouter, &logger, nil, nil)
+
+	// Also build a standalone briefing router to verify its routes work
+	// when the briefing handler is mounted at a different prefix.
+	standaloneRouter := Handler(&logger, nil, nil)
+
+	for _, tc := range []struct {
+		name       string
+		router     http.Handler
+		path       string
+		wantStatus int
+	}{
+		{
+			name:       "direct registration: GET /{meetingId}/briefing",
+			router:     parentRouter,
+			path:       "/" + uuid.New().String() + "/briefing",
+			wantStatus: http.StatusForbidden, // FF off → 403 (not 404)
+		},
+		{
+			name:       "direct registration: GET /{meetingId}/briefing/versions",
+			router:     parentRouter,
+			path:       "/" + uuid.New().String() + "/briefing/versions",
+			wantStatus: http.StatusForbidden, // FF off → 403 (not 404)
+		},
+		{
+			name:       "direct registration: GET /{meetingId}/briefing/sources",
+			router:     parentRouter,
+			path:       "/" + uuid.New().String() + "/briefing/sources",
+			wantStatus: http.StatusForbidden, // FF off → 403 (not 404)
+		},
+		{
+			name:       "standalone briefing router: GET /{meetingId}/briefing",
+			router:     standaloneRouter,
+			path:       "/" + uuid.New().String() + "/briefing",
+			wantStatus: http.StatusForbidden, // FF off → 403 (not 404)
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Header.Set("X-User-ID", uuid.New().String())
+			w := httptest.NewRecorder()
+			tc.router.ServeHTTP(w, req)
+
+			if w.Code == http.StatusNotFound {
+				t.Errorf("got 404 Not Found — briefing router is shadowed by the parent mount. Path %s should not 404.", tc.path)
+			}
+			if w.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
+			}
+		})
+	}
 }
 
 func TestHandler_FeatureFlagDisabled_AllRoutes(t *testing.T) {
@@ -350,7 +439,7 @@ func TestHandler_FeatureFlagDisabled_UnsetEnv(t *testing.T) {
 
 	router := buildBriefingRouter(t)
 	meetingID := uuid.New().String()
-	req := httptest.NewRequest(http.MethodGet, "/upcoming/"+meetingID+"/briefing", nil)
+	req := httptest.NewRequest(http.MethodGet, "/"+meetingID+"/briefing", nil)
 	req.Header.Set("X-User-ID", uuid.New().String())
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -390,7 +479,7 @@ func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
 	router := Handler(&logger, nil, nil)
 
 	meetingID := uuid.New().String()
-	req := httptest.NewRequest(http.MethodGet, "/upcoming/"+meetingID+"/briefing", nil)
+	req := httptest.NewRequest(http.MethodGet, "/"+meetingID+"/briefing", nil)
 	req.Header.Set("X-User-ID", uuid.New().String())
 	req.Header.Set("X-Browser-FF-Pre-Call-Briefing", "true")
 	w := httptest.NewRecorder()
@@ -410,7 +499,7 @@ func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
 	// Re-issue the request to capture the increment delta — the previous
 	// call already incremented once (we can't observe "before" retroactively
 	// for a request that already fired). Take a second request.
-	req2 := httptest.NewRequest(http.MethodGet, "/upcoming/"+uuid.New().String()+"/briefing", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/"+uuid.New().String()+"/briefing", nil)
 	req2.Header.Set("X-User-ID", uuid.New().String())
 	req2.Header.Set("X-Browser-FF-Pre-Call-Briefing", "true")
 	w2 := httptest.NewRecorder()
