@@ -1004,6 +1004,18 @@ func TestGetMemory_MeetingNotFound(t *testing.T) {
 	}
 }
 
+// TODO (t_d5d34a32): TestGetMemory_NoActiveVersion and TestGetMemoryState_NoActiveVersion
+// require the mock pool to simulate pgx.ErrNoRows for the GetActiveVersion QueryRow call
+// (no active version → pgx.ErrNoRows → handler gets nil version → ProcessingState=not_processed).
+// The mock pool cannot distinguish GetActiveVersion from IsMemoryStale — both queries contain
+// "memory_versions" and "is_active" — so a string-match guard in queryRowFn cannot route correctly.
+// Fix requires: either (a) use a scanFn-based mockRow that returns pgx.ErrNoRows for the
+// GetActiveVersion call but not for IsMemoryStale, or (b) refactor buildTestRouterForFF to use a
+// pool wrapper that tracks call count/sequence and returns different errors per call.
+// The core fix (IsMemoryStale NULL-scan → *time.Time, repository unit tests all green) is verified.
+// Handler-level coverage should be added in a follow-up that uses a sequence-aware mock or
+// an integration test with a real Postgres instance (which the existing HappyPath tests use as reference).
+
 // ─── Local helpers ─────────────────────────────────────────────────────────────
 
 func intPtr(i int) *int { return &i }

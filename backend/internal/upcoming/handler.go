@@ -21,8 +21,15 @@ import (
 
 const featureFlagEnv = "FF_ENABLE_UPCOMING_MEETINGS"
 
+// BrowserFlagHeader is the request header the browser client sends to indicate
+// the state of its local upcoming-meetings feature flag. The server uses it to
+// detect misconfiguration (browser enabled but server disabled) so operators
+// can observe the deployment drift via metric + log.
+const BrowserFlagHeader = "X-Browser-FF-Upcoming-Meetings"
+
 type contextKey struct{}
 type poolKey     struct{}
+type authContextKey struct{}
 
 // WithRepository injects the upcoming repository into the request context.
 func WithRepository(pool *pgxpool.Pool) func(http.Handler) http.Handler {
@@ -102,25 +109,64 @@ func hashTitle(title string) string {
 	return hex.EncodeToString(h[:8])
 }
 
+// detectFlagMisconfiguration returns true if the browser is sending a request
+// claiming the upcoming-meetings feature is enabled while the server flag is
+// disabled. Mirrors the pattern used by the memory and briefing handlers so
+// the operator signal reflects only real deployment drift, not random hits to
+// a disabled-feature path.
+func detectFlagMisconfiguration(r *http.Request) bool {
+	browserFlag := r.Header.Get(BrowserFlagHeader)
+	if browserFlag == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(browserFlag), "true")
+}
+
 // Handler returns a chi router with upcoming meeting CRUD routes.
 func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
+	return HandlerWithSubRoute(log, pool, nil)
+}
+
+// HandlerWithSubRoute returns a chi router with upcoming meeting CRUD routes.
+// If mountSubRoute is non-nil, it is called with the router after all upcoming
+// routes are registered, allowing the caller to mount sub-routes that share the
+// /api/v1/upcoming prefix without being shadowed. Specifically, the briefing
+// handler (which registers /upcoming/{meetingId}/briefing/...) is mounted here
+// so it receives requests before the flag-mismatch guard in upcoming's group
+// runs. The pattern solves chi's longest-prefix mount shadowing: if briefing
+// were mounted at /api/v1 (outside and below upcoming's mount), every request
+// to /api/v1/upcoming/{meetingId}/briefing/... would be captured by upcoming's
+// mount and return 404 with no chance for briefing's handlers to run.
+func HandlerWithSubRoute(log *zerolog.Logger, pool *pgxpool.Pool, mountSubRoute func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
+
+	// Inject repository into context so every route can call getRepository(r).
+	// Without this middleware, getRepository(r) returns nil and routes that
+	// touch the DB return 500 with log "no repository in request context".
+	// Mirrors the pattern in internal/meeting/handler.go:84 and
+	// internal/briefing/handler.go:112. Fix for task t_42c0144b (ethical-hacker
+	// finding F-A: /api/v1/upcoming returns 500).
+	r.Use(WithRepository(pool))
 
 	r.Group(func(g chi.Router) {
 		g.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !isFeatureFlagEnabled(r.Context()) {
-					// Emit flag mismatch metric: frontend is attempting to use the feature
-					// while the backend flag is disabled.
-					FlagMismatchTotal.WithLabelValues("upcoming_meetings", "frontend-disabled", "feature_disabled").Inc()
+					// Only emit the flag-mismatch signal when the browser
+					// actually sent the feature header. Otherwise the metric
+					// would fire for any random GET/POST to a disabled
+					// feature path and pollute the operator signal.
+					if detectFlagMisconfiguration(r) {
+						FlagMismatchTotal.WithLabelValues("upcoming_meetings", "frontend-disabled", "feature_disabled").Inc()
 
-					userID, _ := getUserID(r)
-					log.Info().
-						Str("request_id", getCorrelationID(r)).
-						Str("user_id_hash", hashID(userID)).
-						Str("flag_name", "upcoming_meetings").
-						Str("direction", "frontend-disabled").
-						Msg("upcoming_meeting.flag_mismatch")
+						userID, _ := getUserID(r)
+						log.Info().
+							Str("request_id", getCorrelationID(r)).
+							Str("user_id_hash", hashID(userID)).
+							Str("flag_name", "upcoming_meetings").
+							Str("direction", "frontend-disabled").
+							Msg("upcoming_meeting.flag_mismatch")
+					}
 
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
@@ -137,6 +183,10 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool) http.Handler {
 		g.Patch("/{id}", handleUpdateUpcomingMeeting(log))
 		g.Post("/{id}/cancel", handleCancelUpcomingMeeting(log))
 	})
+
+	if mountSubRoute != nil {
+		mountSubRoute(r)
+	}
 
 	return r
 }

@@ -1,30 +1,18 @@
 <script lang="ts">
-  import { Button, Input, Card, Alert } from '$lib/components/ui';
-  import { login } from '$lib/stores/auth';
+  import { Button, Input, Alert } from '$lib/components/ui';
+  import { loginAndStore } from '$lib/stores/auth';
+  import { safeRedirect } from '$lib/utils/safeRedirect';
 
   let email = $state('');
   let password = $state('');
   let saving = $state(false);
   let error = $state('');
 
-  // Derive a deterministic v4-style UUID from an email address
-  async function hashEmailToUUID(email: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(email.toLowerCase().trim());
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-
-    // Construct a v4 UUID: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-    // y in [8, 9, a, b] to satisfy variant bits
-    const hex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-    const p1 = hex.slice(0, 8);
-    const p2 = hex.slice(8, 12);
-    const p3 = '4' + hex.slice(13, 16);
-    const p4 = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16) + hex.slice(17, 20);
-    const p5 = hex.slice(20, 32);
-    return `${p1}-${p2}-${p3}-${p4}-${p5}`;
-  }
-
+  // F4 fix: the login flow no longer touches document.cookie. The
+  // session_id and X-User-ID cookies are set by the server's
+  // Set-Cookie response, which the browser stores automatically.
+  // Because the server sets HttpOnly + Secure + SameSite=Strict,
+  // JavaScript cannot read the cookie values — which is the point.
   async function handleSubmit(e: Event) {
     e.preventDefault();
     if (!email.trim() || !password.trim()) return;
@@ -32,27 +20,13 @@
     error = '';
 
     try {
-      // TODO: replace with real auth API call when backend is ready
-      // Simulate login by setting a session cookie and auth store
-      await new Promise((r) => setTimeout(r, 500));
-
-      // Set session cookie (simplified for demo; real auth uses server-side session)
-      document.cookie = `session_id=demo-session; path=/; SameSite=Lax`;
-
-      // Derive a consistent X-User-ID UUID from email for backend auth
-      // Uses a simple hash to generate a deterministic v4-style UUID
-      const emailHash = await hashEmailToUUID(email);
-      document.cookie = `X-User-ID=${emailHash}; path=/; SameSite=Lax`;
-
-      // Update auth store
-      login('Demo User', email);
-
-      // Redirect to dashboard or ?redirectTo param
+      await loginAndStore(email.trim(), password);
+      // Redirect to ?redirectTo or the dashboard (CWE-601 safe).
       const params = new URLSearchParams(window.location.search);
-      const redirectTo = params.get('redirectTo') || '/';
+      const redirectTo = safeRedirect(params.get('redirectTo'));
       window.location.href = redirectTo;
-    } catch {
-      error = 'Invalid email or password';
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Invalid email or password';
     } finally {
       saving = false;
     }

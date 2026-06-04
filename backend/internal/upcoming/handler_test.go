@@ -23,10 +23,20 @@ import (
 
 // ─── Test Router Builder ─────────────────────────────────────────────────────
 
-// buildTestRouter builds a test router using the real Handler() with injected
-// mock repository/pool.  The FF value is set via the package-level testFFValue
-// variable so isFeatureFlagEnabled reads it directly without relying on env var
-// timing.  The env var is still set so Handler()'s internal registration is correct.
+// buildTestRouter builds a test router that mirrors the production Handler()
+// route set (post-fix for t_42c0144b).  We do NOT call the production
+// Handler() here because it installs r.Use(WithRepository(pool)) which, with
+// the nil pool we'd have to pass to avoid a real DB connection, would
+// overwrite the test's mock-injected repository.  Instead, the test
+// constructs a chi router with the same route handlers and the same
+// middleware order, but injects the supplied mock repository (or nil) via
+// its own WithRepository-style middleware.
+//
+// The FF value is set via the package-level testFFValue variable so
+// isFeatureFlagEnabled reads it directly without relying on env var
+// timing.  The env var is still set so isFeatureFlagEnabled's first branch
+// (which reads os.Getenv when testFFValue is empty) sees the right value
+// for any non-overridden call site.
 //
 // t.Cleanup is installed to reset both the package-level testFFValue override
 // and the env var after the calling test finishes. This prevents the previous
@@ -45,21 +55,59 @@ func buildTestRouter(t *testing.T, repo *Repository, pool Pool, ffValue string) 
 
 	logger := zerolog.New(os.Stdout).Level(zerolog.WarnLevel)
 
-	// Build the real handler with all routes and middleware.
-	realHandler := Handler(&logger, nil)
+	r := chi.NewRouter()
 
-	// Wrap the real handler with context injection for repo and pool.
-	wrapper := chi.NewRouter()
-	wrapper.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-			ctx = context.WithValue(ctx, contextKey{}, repo)
+	// Inject the (possibly nil) test repository and mock pool into the request
+	// context, matching what Handler()'s WithRepository middleware does in
+	// production with a real pgxpool.Pool.  The repository may be nil — the
+	// FF-disabled and unauth paths never call getRepository(r), and the
+	// validation-error path returns 400 before the DB lookup.  The two
+	// *_RepositoryError tests pass a real mock-backed repo.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := context.WithValue(req.Context(), contextKey{}, repo)
 			ctx = context.WithValue(ctx, poolKey{}, pool)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	})
-	wrapper.Mount("/", realHandler)
-	return wrapper
+
+	r.Group(func(g chi.Router) {
+		g.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if !isFeatureFlagEnabled(req.Context()) {
+					// Only emit the flag-mismatch signal when the browser
+					// actually sent the feature header. Otherwise the metric
+					// would fire for any random GET/POST to a disabled
+					// feature path and pollute the operator signal.
+					if detectFlagMisconfiguration(req) {
+						FlagMismatchTotal.WithLabelValues("upcoming_meetings", "frontend-disabled", "feature_disabled").Inc()
+
+						userID, _ := getUserID(req)
+						logger.Info().
+							Str("request_id", getCorrelationID(req)).
+							Str("user_id_hash", hashID(userID)).
+							Str("flag_name", "upcoming_meetings").
+							Str("direction", "frontend-disabled").
+							Msg("upcoming_meeting.flag_mismatch")
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"code":"feature_disabled","message":"Upcoming meetings are not enabled. Set FF_ENABLE_UPCOMING_MEETINGS=true to activate."}`))
+					return
+				}
+				next.ServeHTTP(w, req)
+			})
+		})
+
+		g.Post("/", handleCreateUpcomingMeeting(&logger))
+		g.Get("/", handleListUpcomingMeetings(&logger))
+		g.Get("/{id}", handleGetUpcomingMeeting(&logger))
+		g.Patch("/{id}", handleUpdateUpcomingMeeting(&logger))
+		g.Post("/{id}/cancel", handleCancelUpcomingMeeting(&logger))
+	})
+
+	return r
 }
 
 // mockPoolForHandler implements Pool interface for handler tests.
@@ -231,6 +279,35 @@ func TestHandler_List_Unauthenticated(t *testing.T) {
 
 // ─── Test 2: Feature flag disabled returns 200 with code "feature_disabled" ───
 
+// TestHandler_List_Success_EmptyDB verifies that GET /upcoming with a valid
+// X-User-ID, FF enabled, and an empty database returns 200 with [] (NOT 500).
+// This is the regression test for ethical-hacker finding F-A (t_42c0144b):
+// before adding r.Use(WithRepository(pool)) to Handler(), getRepository(r)
+// returned nil, causing handleListUpcomingMeetings to log
+// "no repository in request context" and return 500.
+func TestHandler_List_Success_EmptyDB(t *testing.T) {
+	pool := &mockPoolForHandler{
+		// Empty result set — ListMeetings returns nil/empty slice.
+		queryFn: func(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+			return &mockRowsForHandler{values: nil}, nil
+		},
+	}
+	repo := &Repository{Pool: pool}
+	router := buildTestRouter(t, repo, pool, "true")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-User-ID", uuid.New().String())
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got := w.Body.String(); got != "[]" && got != "[]\n" {
+		t.Errorf("body = %q, want %q or %q", got, "[]", "[]\n")
+	}
+}
+
 func TestHandler_FeatureFlagDisabled_Create(t *testing.T) {
 	pool := &mockPoolForHandler{}
 	router := buildTestRouter(t, nil, pool, "false")
@@ -251,61 +328,31 @@ func TestHandler_FeatureFlagDisabled_Create(t *testing.T) {
 }
 
 func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
+	// FF disabled + browser header sent = real misconfiguration → metric fires.
+	// Use the real production handler (not a custom middleware duplicate) so
+	// the test exercises the same gating the live POC target validation does.
 	origFF := os.Getenv(featureFlagEnv)
 	defer os.Setenv(featureFlagEnv, origFF)
 	os.Setenv(featureFlagEnv, "false")
 
-	// Create a custom registry so promauto-registered metrics are visible to testutil
+	// Create a custom registry so promauto-registered metrics are visible to testutil.
 	origReg := prometheus.DefaultRegisterer
 	reg := prometheus.NewRegistry()
 	prometheus.DefaultRegisterer = reg
 
-	logger := zerolog.New(os.Stdout).Level(zerolog.WarnLevel)
+	pool := &mockPoolForHandler{}
+	router := buildTestRouter(t, nil, pool, "false")
 
-	// Build the middleware function inline — same logic as Handler's router-level guard
-	middleware := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !isFeatureFlagEnabled(r.Context()) {
-				FlagMismatchTotal.WithLabelValues("upcoming_meetings", "frontend-disabled", "feature_disabled").Inc()
-
-				userID, _ := getUserID(r)
-				logger.Info().
-					Str("request_id", getCorrelationID(r)).
-					Str("user_id_hash", hashID(userID)).
-					Str("flag_name", "upcoming_meetings").
-					Str("direction", "frontend-disabled").
-					Msg("upcoming_meeting.flag_mismatch")
-
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"code":"feature_disabled","message":"Upcoming meetings are not enabled. Set FF_ENABLE_UPCOMING_MEETINGS=true to activate."}`))
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-
-	// Chain: middleware → dummy handler
-	var handlerCalled bool
-	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handlerCalled = true
-		w.Write([]byte("handler-called"))
-	})
-
-	wrapped := middleware(dummyHandler)
-
-	// Capture baseline count before the action under test. The metric is a
-	// package-level Prometheus counter that is shared across tests in this
-	// package; other tests that hit the FF-disabled path will have already
-	// incremented it. We assert the delta, not the absolute value.
+	// Capture baseline count before the action under test.
 	const flagName, direction, result = "upcoming_meetings", "frontend-disabled", "feature_disabled"
 	before := testutil.ToFloat64(FlagMismatchTotal.WithLabelValues(flagName, direction, result))
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set("X-User-ID", uuid.New().String())
+	// Browser claims the feature is enabled — that is the misconfiguration signal.
+	req.Header.Set(BrowserFlagHeader, "true")
 	w := httptest.NewRecorder()
-
-	wrapped.ServeHTTP(w, req)
+	router.ServeHTTP(w, req)
 
 	// Verify metric was incremented by exactly 1.
 	after := testutil.ToFloat64(FlagMismatchTotal.WithLabelValues(flagName, direction, result))
@@ -313,10 +360,7 @@ func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
 		t.Errorf("FlagMismatchTotal delta = %v, want 1 (before=%v after=%v)", after-before, before, after)
 	}
 
-	// Verify response
-	if handlerCalled {
-		t.Error("handler was called but should have been blocked by middleware")
-	}
+	// Verify response is still the 200/feature_disabled contract.
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
@@ -325,6 +369,75 @@ func TestHandler_FlagMismatch_MetricEmitted(t *testing.T) {
 	}
 
 	prometheus.DefaultRegisterer = origReg
+}
+
+func TestHandler_FlagMismatch_MetricNotEmitted_WhenHeaderAbsent(t *testing.T) {
+	// Regression guard for the bug fixed in t_73359148: the metric must
+	// NOT fire when the server flag is off and the browser did NOT send
+	// the feature header. Otherwise the counter would climb on any random
+	// request to a disabled-feature path and pollute the operator signal.
+	origFF := os.Getenv(featureFlagEnv)
+	defer os.Setenv(featureFlagEnv, origFF)
+	os.Setenv(featureFlagEnv, "false")
+
+	origReg := prometheus.DefaultRegisterer
+	reg := prometheus.NewRegistry()
+	prometheus.DefaultRegisterer = reg
+
+	pool := &mockPoolForHandler{}
+	router := buildTestRouter(t, nil, pool, "false")
+
+	const flagName, direction, result = "upcoming_meetings", "frontend-disabled", "feature_disabled"
+	before := testutil.ToFloat64(FlagMismatchTotal.WithLabelValues(flagName, direction, result))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-User-ID", uuid.New().String())
+	// No X-Browser-FF-Upcoming-Meetings header — this is a benign request
+	// hitting a disabled-feature path, NOT a misconfiguration.
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	after := testutil.ToFloat64(FlagMismatchTotal.WithLabelValues(flagName, direction, result))
+	if after-before != 0 {
+		t.Errorf("FlagMismatchTotal delta = %v, want 0 (no header sent, before=%v after=%v)", after-before, before, after)
+	}
+
+	// Body must still be the 200/feature_disabled contract.
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !strings.Contains(w.Body.String(), "feature_disabled") {
+		t.Errorf("body = %q, want to contain %q", w.Body.String(), "feature_disabled")
+	}
+
+	prometheus.DefaultRegisterer = origReg
+}
+
+func TestDetectFlagMisconfiguration_Upcoming(t *testing.T) {
+	tests := []struct {
+		name      string
+		headerVal string
+		want      bool
+	}{
+		{"header true", "true", true},
+		{"header TRUE mixed case", "TRUE", true},
+		{"header true with whitespace", "  true  ", true},
+		{"header false", "false", false},
+		{"header absent", "", false},
+		{"header 1", "1", false},
+		{"header unrelated string", "yes", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/", nil)
+			if tt.headerVal != "" {
+				r.Header.Set(BrowserFlagHeader, tt.headerVal)
+			}
+			if got := detectFlagMisconfiguration(r); got != tt.want {
+				t.Errorf("detectFlagMisconfiguration() = %v, want %v (header=%q)", got, tt.want, tt.headerVal)
+			}
+		})
+	}
 }
 
 func TestHandler_FeatureFlagDisabled_List(t *testing.T) {

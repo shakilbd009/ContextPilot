@@ -104,24 +104,26 @@
       <div class="page-header__actions">
         <!-- View mode toggle -->
         <div class="view-toggle" role="group" aria-label="Switch view">
-          <Button
-            variant={viewMode === 'list' ? 'secondary' : 'ghost'}
-            size="sm"
-            onclick={() => goto('/upcoming?view=list')}
+          <a
+            href="/upcoming?view=list"
+            role="button"
+            class="view-toggle__button"
+            class:view-toggle__button--active={viewMode === 'list'}
             aria-pressed={viewMode === 'list'}
             aria-current={viewMode === 'list' ? 'true' : undefined}
           >
             List
-          </Button>
-          <Button
-            variant={viewMode === 'calendar' ? 'secondary' : 'ghost'}
-            size="sm"
-            onclick={() => goto('/upcoming?view=calendar')}
+          </a>
+          <a
+            href="/upcoming?view=calendar"
+            role="button"
+            class="view-toggle__button"
+            class:view-toggle__button--active={viewMode === 'calendar'}
             aria-pressed={viewMode === 'calendar'}
             aria-current={viewMode === 'calendar' ? 'true' : undefined}
           >
             Calendar
-          </Button>
+          </a>
         </div>
         <Button variant="primary" onclick={() => goto('/upcoming/new')}>
           Schedule meeting
@@ -255,6 +257,36 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     overflow: hidden;
+  }
+
+  .view-toggle__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid transparent;
+    color: var(--color-primary);
+    background: transparent;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    line-height: 1.5;
+    text-decoration: none;
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  }
+
+  .view-toggle__button:hover {
+    background: var(--color-background-subtle);
+  }
+
+  .view-toggle__button:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .view-toggle__button--active {
+    background: var(--color-background);
+    color: var(--color-text-primary);
+    border-color: var(--color-border);
   }
 
   /* ── Loading ── */

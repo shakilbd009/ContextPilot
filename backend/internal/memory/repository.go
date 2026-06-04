@@ -336,7 +336,7 @@ func (r *Repository) ListVersions(ctx context.Context, meetingID uuid.UUID) ([]M
 // active memory version's created_at (meaning the source changed after processing).
 func (r *Repository) IsMemoryStale(ctx context.Context, meetingID uuid.UUID) (bool, error) {
 	var updatedAt time.Time
-	var versionCreatedAt time.Time
+	var versionCreatedAt *time.Time // pointer so NULL from LEFT JOIN scans as nil
 	var hasActive bool
 
 	err := r.pool.QueryRow(ctx, `
@@ -349,10 +349,10 @@ func (r *Repository) IsMemoryStale(ctx context.Context, meetingID uuid.UUID) (bo
 		return false, err
 	}
 	// No active version means not stale (not processed yet)
-	if !hasActive {
+	if !hasActive || versionCreatedAt == nil {
 		return false, nil
 	}
-	return updatedAt.After(versionCreatedAt), nil
+	return updatedAt.After(*versionCreatedAt), nil
 }
 
 // MarkVersionConflictReview marks a version as conflict_review (conflicts detected

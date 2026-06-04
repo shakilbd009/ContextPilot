@@ -42,9 +42,14 @@ services:
       SERVER_PORT: "3000"
       DATABASE_URL: postgres://contextpilot:contextpilot@postgres:5432/contextpilot?sslmode=disable
       REDIS_URL: redis://redis:6379
-      RATE_LIMIT_IMPORT_MAX_REQUESTS: "0"
+      # CWE-770: must match .env.example. Setting this to 0 (or omitting
+      # the var and letting the older binary default) silently disables
+      # the import rate limiter at the main.go gate. Keep aligned with
+      # config.DefaultRateLimitImportMaxRequests and docs/security-baseline.md.
+      RATE_LIMIT_IMPORT_MAX_REQUESTS: "100"
+      RATE_LIMIT_IMPORT_WINDOW_SECS: "60"
       ENVIRONMENT: development
-      FF_ENABLE_APP_SHELL: "false"
+      FF_ENABLE_APP_SHELL: "true"
       FF_ENABLE_UPCOMING_MEETINGS: "true"
       FF_ENABLE_MANUAL_MEETING_IMPORT: "true"
     depends_on:

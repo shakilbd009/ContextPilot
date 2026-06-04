@@ -146,6 +146,55 @@ func (r *Repository) GetMeeting(ctx context.Context, id uuid.UUID) (*Meeting, er
 	return &m, nil
 }
 
+// GetMeetingOwned retrieves a meeting by ID only if it is owned by the given user.
+// Used by handleGetMeeting to enforce ownership on the read path. Returns ErrNotFound
+// when the meeting does not exist OR is owned by a different user; callers MUST NOT
+// distinguish those cases to the client (return 404 either way to avoid existence leak).
+// IDOR-FIX-CWE-639
+func (r *Repository) GetMeetingOwned(ctx context.Context, id, userID uuid.UUID) (*Meeting, error) {
+	var m Meeting
+	var transcript, notes *string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, title, completedat, transcript, notes, contentsource, createdat, createdby, displayorder
+		FROM meetings
+		WHERE id = $1 AND createdby = $2
+	`, id, userID).Scan(&m.ID, &m.Title, &m.CompletedAt, &transcript, &notes, &m.ContentSource, &m.CreatedAt, &m.CreatedBy, &m.DisplayOrder)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	m.Transcript = transcript
+	m.Notes = notes
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, displayname, email, organization, role, displayorder
+		FROM meeting_participants
+		WHERE meetingid = $1
+		ORDER BY displayorder
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	m.Participants = []Participant{}
+	for rows.Next() {
+		var p Participant
+		if err := rows.Scan(&p.ID, &p.DisplayName, &p.Email, &p.Organization, &p.Role, &p.DisplayOrder); err != nil {
+			return nil, err
+		}
+		p.MeetingID = id
+		m.Participants = append(m.Participants, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &m, nil
+}
+
 // ListMeetings returns meetings for a user with pagination.
 // limit defaults to 20; offset is 0-based page index.
 func (r *Repository) ListMeetings(ctx context.Context, createdBy uuid.UUID, limit, offset int) ([]Meeting, error) {

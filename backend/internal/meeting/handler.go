@@ -3,6 +3,7 @@ package meeting
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,11 +13,35 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
 	"github.com/contextpilot/backend/internal/memory"
 )
+
+// sanitizeDBError returns a redacted error string suitable for server logs.
+// It strips the raw pgx/pgconn error message (which can include column names,
+// table names, SQL fragments, and other schema-revealing information) and
+// returns only a stable error type + SQLSTATE code. The original error is
+// preserved internally for HTTP status mapping and metrics; only the log
+// line is sanitized to mitigate CWE-209 (Generation of Error Message
+// Containing Sensitive Information).
+//
+// For *pgconn.PgError, returns "pgx.PgError(sqlstate=XXXXX)" where XXXXX is
+// the 5-character SQLSTATE category (e.g. "42703" for undefined_column).
+// For any other error, returns the Go type name via fmt.Sprintf("%T", err).
+// For nil, returns an empty string.
+func sanitizeDBError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return fmt.Sprintf("pgx.PgError(sqlstate=%s)", pgErr.Code)
+	}
+	return fmt.Sprintf("%T", err)
+}
 
 // FeatureFlagEnv is the server-side env var for the manual meeting import flag.
 const FeatureFlagEnv = "FF_ENABLE_MANUAL_MEETING_IMPORT"
@@ -46,6 +71,7 @@ type MeetingRepository interface {
 	CreateMeeting(ctx context.Context, title string, completedAt time.Time, transcript, notes *string, contentSource string, createdBy uuid.UUID, participants []ParticipantInput, idempotencyToken uuid.UUID) (uuid.UUID, error)
 	ListMeetings(ctx context.Context, createdBy uuid.UUID, limit, offset int) ([]Meeting, error)
 	GetMeeting(ctx context.Context, id uuid.UUID) (*Meeting, error)
+	GetMeetingOwned(ctx context.Context, id, userID uuid.UUID) (*Meeting, error) // IDOR-FIX-CWE-639
 	UpdateMeeting(ctx context.Context, meetingID uuid.UUID, title *string, completedAt *time.Time, transcript, notes *string, participants []ParticipantInput) (bool, error)
 }
 
@@ -78,6 +104,21 @@ func getCorrelationID(r *http.Request) string {
 // The rateLimitMiddleware is applied to POST /meetings (import) to prevent abuse.
 // Pass nil to disable rate limiting on this handler.
 func Handler(log *zerolog.Logger, pool *pgxpool.Pool, rateLimitMiddleware func(http.Handler) http.Handler) http.Handler {
+	return HandlerWithSubRoute(log, pool, rateLimitMiddleware, nil)
+}
+
+// HandlerWithSubRoute returns a chi router with meeting CRUD routes and
+// optionally delegates /{id}/... sub-routes to the provided mount function.
+// Use this instead of Handler when the caller needs to nest feature
+// sub-resources (e.g. memory) under the meeting router. Registering the
+// sub-router via Route("/{id}", ...) lets chi's radix tree do
+// longest-prefix matching at the {id} node, so /{id}/memory/... reaches
+// the sub-router and /{id} still reaches the meeting handler.
+//
+// The mount function receives a sub-router scoped at /{id} and should
+// register its routes relative to that prefix. Pass nil to skip the
+// delegation when no sub-resources are needed.
+func HandlerWithSubRoute(log *zerolog.Logger, pool *pgxpool.Pool, rateLimitMiddleware func(http.Handler) http.Handler, mountSubRoute func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 
 	// Inject repository into context
@@ -115,6 +156,15 @@ func Handler(log *zerolog.Logger, pool *pgxpool.Pool, rateLimitMiddleware func(h
 
 		// GET /meetings — list meetings
 		r.Get("/", handleListMeetings(log))
+
+		// Delegate /{id}/... sub-routes BEFORE registering /{id} handlers.
+		// chi's radix tree handles Route("/{id}", ...) + Get("/{id}", ...)
+		// correctly when the Route is registered first: longer paths
+		// (/{id}/memory/...) reach the sub-router and /{id} still matches
+		// the GET/PATCH handlers below.
+		if mountSubRoute != nil {
+			r.Route("/{id}", mountSubRoute)
+		}
 
 		// GET /meetings/{id} — get meeting detail
 		r.Get("/{id}", handleGetMeeting(log))
@@ -333,10 +383,19 @@ func handleListMeetings(log *zerolog.Logger) http.HandlerFunc {
 }
 
 // handleGetMeeting handles GET /meetings/{id}
+// Authorization: the requester must own the meeting. Cross-tenant reads return
+// 404 (NOT 403) so the existence of a meeting is never disclosed to a non-owner.
+// Mirrors the ownership check in handleUpdateMeeting (line ~416).
+// IDOR-FIX-CWE-639
 func handleGetMeeting(log *zerolog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userIDStr := strings.TrimSpace(r.Header.Get("X-User-ID"))
 		if userIDStr == "" {
+			http.Error(w, `{"type":"about:blank","title":"Unauthorized","status":401}`, http.StatusUnauthorized)
+			return
+		}
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
 			http.Error(w, `{"type":"about:blank","title":"Unauthorized","status":401}`, http.StatusUnauthorized)
 			return
 		}
@@ -355,7 +414,9 @@ func handleGetMeeting(log *zerolog.Logger) http.HandlerFunc {
 			return
 		}
 
-		meeting, err := repo.GetMeeting(r.Context(), id)
+		// Owner-aware read: returns ErrNotFound for both "missing" and
+		// "exists but owned by a different user". Caller maps to 404.
+		meeting, err := repo.GetMeetingOwned(r.Context(), id, userID)
 		if err != nil {
 			if err == ErrNotFound {
 				http.Error(w, `{"type":"about:blank","title":"Not Found","status":404,"detail":"Meeting not found"}`, http.StatusNotFound)
@@ -457,7 +518,13 @@ func handleUpdateMeeting(log *zerolog.Logger) http.HandlerFunc {
 		// Perform update; hasChanges is true if watched source fields changed
 		hasChanges, err := repo.UpdateMeeting(r.Context(), id, in.Title, completedAt, in.Transcript, in.Notes, in.Participants)
 		if err != nil {
-			log.Error().Err(err).Msg("failed to update meeting")
+			// Sanitize error to avoid leaking column names, table names, or
+			// SQL fragments in the server log (CWE-209). The HTTP response
+			// body remains a generic 500 — only the log line is redacted.
+			log.Error().
+				Str("meetingId", id.String()).
+				Str("errorType", sanitizeDBError(err)).
+				Msg("failed to update meeting")
 			http.Error(w, `{"type":"about:blank","title":"Internal Server Error","status":500}`, http.StatusInternalServerError)
 			return
 		}

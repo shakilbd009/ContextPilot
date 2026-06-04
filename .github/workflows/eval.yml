@@ -216,12 +216,14 @@ jobs:
         # This project uses docker-compose v1 explicitly. The Makefile and
         # scripts/doctor.sh are wired for v1; CI follows suit and falls
         # back to v2 if v1 is unavailable.
+        # --build forces a no-cache rebuild so the auth fix (commit a64993e)
+        # is active in CI instead of a stale cached image.
         run: |
           set -e
           if command -v docker-compose >/dev/null 2>&1; then
-            docker-compose up -d
+            docker-compose up --build -d
           else
-            docker compose up -d
+            docker compose up --build -d
           fi
 
       - name: Wait for backend health

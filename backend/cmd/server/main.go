@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/contextpilot/backend/internal/appshell"
+	"github.com/contextpilot/backend/internal/auth"
 	"github.com/contextpilot/backend/internal/briefing"
 	"github.com/contextpilot/backend/internal/config"
 	"github.com/contextpilot/backend/internal/handler"
@@ -60,6 +61,25 @@ func main() {
 		log.Info().Msg("DATABASE_URL not set; running without DB (app-shell only)")
 	}
 
+	// CSRF middleware (CWE-352) — Origin/Referer allowlist applied to all
+	// state-changing methods (POST/PUT/PATCH/DELETE) at the chi router
+	// layer. Defense-in-depth alongside the SvelteKit /api/* hooks-layer
+	// check. Only installed when CSRF_ALLOWED_ORIGINS is non-empty
+	// (empty = disabled for dev/fallback).
+	var csrfMiddleware func(http.Handler) http.Handler
+	if len(cfg.CSRFAllowedOrigins) > 0 {
+		csrfMiddleware = middleware.NewCSRF(
+			log.Logger,
+			middleware.CSRFConfig{
+				AllowedOrigins: cfg.CSRFAllowedOrigins,
+				Enabled:        true,
+			},
+		)
+		log.Info().
+			Strs("allowed_origins", cfg.CSRFAllowedOrigins).
+			Msg("CSRF middleware enabled")
+	}
+
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -67,6 +87,12 @@ func main() {
 	r.Use(middleware.Recover(log.Logger))
 	r.Use(chiware.Logger)
 	r.Use(chiware.Timeout(30 * time.Second))
+
+	// CSRF middleware — only active when CSRF_ALLOWED_ORIGINS is set.
+	// GET/HEAD/OPTIONS pass through untouched (zero impact on read traffic).
+	if csrfMiddleware != nil {
+		r.Use(csrfMiddleware)
+	}
 
 	// Health endpoints
 	r.Get("/healthz", handler.Healthz)
@@ -78,6 +104,9 @@ func main() {
 	// App shell routes — all gated by FF_ENABLE_APP_SHELL (defaults false).
 	r.Mount("/api/v1/appshell", appshell.Handler(&log.Logger))
 
+	// Auth routes — login, signup, logout. Gated by FF_ENABLE_APP_SHELL.
+	r.Mount("/api/v1/auth", auth.Handler(&log.Logger))
+
 	// Briefing background worker — starts when FF_ENABLE_PRE_CALL_BRIEFING=true.
 	// Worker goroutine is stopped via briefingWorker.Stop() during graceful shutdown.
 	var briefingWorker *briefing.Worker
@@ -87,8 +116,25 @@ func main() {
 
 	// Rate limiting middleware for POST /meetings (100 req/min per IP by default).
 	// Configured via RATE_LIMIT_IMPORT_MAX_REQUESTS and RATE_LIMIT_IMPORT_WINDOW_SECS.
+	//
+	// SECURITY (CWE-770): the middleware is ALWAYS installed for the import
+	// path when the config value is positive. config.Load already coerces
+	// 0 to the documented default, but this gate is the second layer of
+	// defense: a negative value means "explicitly disabled" (escape hatch
+	// for incident response); anything else installs the middleware. This
+	// prevents a future regression where an operator sets 0 and silently
+	// disables rate limiting, as observed in audit task t_6cc2471a.
 	var importRateLimitMiddleware func(http.Handler) http.Handler
-	if cfg.RateLimitImportMaxRequests > 0 {
+	if cfg.RateLimitImportMaxRequests < 0 {
+		log.Warn().
+			Int("max_requests", cfg.RateLimitImportMaxRequests).
+			Msg("RATE_LIMIT_IMPORT_MAX_REQUESTS is negative — import rate limiting is EXPLICITLY DISABLED (incident-response escape hatch)")
+	} else {
+		if cfg.RateLimitImportMaxRequests == 0 {
+			// Should be impossible because config.Load coerces 0 to the
+			// default, but log it loudly if it ever happens so we notice.
+			log.Warn().Msg("RATE_LIMIT_IMPORT_MAX_REQUESTS=0 reached main gate; defaulting to documented default")
+		}
 		importRateLimitMiddleware = middleware.NewRateLimiter(
 			log.Logger,
 			middleware.RateLimiterConfig{
@@ -105,12 +151,43 @@ func main() {
 	// Upcoming meetings — gated by FF_ENABLE_UPCOMING_MEETINGS (defaults false).
 	// Only mounted if pool != nil (DB available).
 	if pool != nil {
-		r.Mount("/api/v1/meetings", meeting.Handler(&log.Logger, pool, importRateLimitMiddleware))
-		r.Mount("/api/v1/upcoming", upcoming.Handler(&log.Logger, pool))
+		// Memory processing — gated by FF_ENABLE_MEETING_MEMORY_PROCESSING
+		// (defaults false). Start the background worker BEFORE building the
+		// meeting router so we can wire the worker into the memory sub-router
+		// that lives at /api/v1/meetings/{id}/memory/.... The memory sub-router
+		// is nested inside the meeting sub-router (NOT mounted at /api/v1) so
+		// chi's longest-prefix mount does not shadow the /meetings/{id}/...
+		// sub-paths. The previous approach — r.Mount("/api/v1", memory.Handler)
+		// — was unreachable at runtime because the meeting mount at
+		// /api/v1/meetings captured every /api/v1/meetings/... request and
+		// 404'd inside the meeting router before the flag-mismatch guard ran.
+		if memory.IsFeatureFlagEnabled() {
+			memRepo := memory.NewRepository(pool)
+			memWorker = memory.NewWorker(
+				memRepo,
+				&memory.DefaultMemoryProcessor{},
+				&log.Logger,
+				memory.DefaultWorkerConfig(),
+			)
+			// ARCH_OK: server-lifetime context for background worker startup — same pattern as pgxpool.New
+			memWorker.Start(context.Background())
+		}
+
+		// Build the meeting router and nest the memory sub-router when the
+		// feature flag is on. When the flag is off, mountSubRoute is nil and
+		// the meeting router is identical to the pre-fix shape.
+		var mountSubRoute func(chi.Router)
+		if memWorker != nil {
+			mountSubRoute = func(sub chi.Router) {
+				memory.RegisterRoutesOnRouter(sub, &log.Logger, pool, memWorker)
+			}
+		}
+		r.Mount("/api/v1/meetings", meeting.HandlerWithSubRoute(&log.Logger, pool, importRateLimitMiddleware, mountSubRoute))
 
 		// Briefing worker — gated by FF_ENABLE_PRE_CALL_BRIEFING (defaults false).
 		// Instantiates after BriefingService is ready to process jobs from
-		// briefing_processing_jobs queue.
+		// briefing_processing_jobs queue. Created BEFORE the upcoming router
+		// so we can pass the handler to upcoming's sub-route callback.
 		if briefing.IsFeatureFlagEnabled() {
 			// briefingSourceAdapter implements briefing.MeetingSourceRepo using the same pool,
 			// bridging the briefing service's source-selection queries to the meeting tables.
@@ -125,23 +202,27 @@ func main() {
 			)
 			// ARCH_OK: server-lifetime context for background worker startup — same pattern as pgxpool.New
 			briefingWorker.Start(context.Background())
-			r.Mount("/api/v1/upcoming", briefing.Handler(&log.Logger, pool, briefingWorker))
 		}
 
-		// Memory processing — gated by FF_ENABLE_MEETING_MEMORY_PROCESSING (defaults false).
-		// Starts background worker when pool is available.
-		if memory.IsFeatureFlagEnabled() {
-			memRepo := memory.NewRepository(pool)
-			memWorker = memory.NewWorker(
-				memRepo,
-				&memory.DefaultMemoryProcessor{},
-				&log.Logger,
-				memory.DefaultWorkerConfig(),
-			)
-			// ARCH_OK: server-lifetime context for background worker startup — same pattern as pgxpool.New
-			memWorker.Start(context.Background())
-			r.Mount("/api/v1", memory.Handler(&log.Logger, pool, memWorker))
+		// Build the upcoming router and nest the briefing sub-router when the
+		// briefing feature flag is on. This solves chi's route-shadowing problem:
+		// mounting briefing at /api/v1 (outside upcoming) would shadow every
+		// /api/v1/upcoming/{meetingId}/briefing/... request (404) because chi's
+		// radix tree matches the more-specific /api/v1/upcoming mount first and
+		// the briefing handler is never reached. By registering briefing paths
+		// directly on the upcoming router (not inside a Route sub-scope), both
+		// upcoming and briefing routes coexist without shadowing.
+		var upcomingSubRoute func(chi.Router)
+		if briefingWorker != nil {
+			upcomingSubRoute = func(r chi.Router) {
+				// Register briefing paths directly on the upcoming router at
+				// /{meetingId}/briefing/... so both upcoming ({id}, /{id}/cancel)
+				// and briefing coexist without chi's Route sub-scope causing
+				// path-segment duplication (which produces 404).
+				briefing.RegisterRoutesOnRouter(r, &log.Logger, pool, briefingWorker)
+			}
 		}
+		r.Mount("/api/v1/upcoming", upcoming.HandlerWithSubRoute(&log.Logger, pool, upcomingSubRoute))
 	}
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)
