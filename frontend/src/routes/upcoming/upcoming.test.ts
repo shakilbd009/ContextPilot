@@ -219,20 +219,18 @@ describe('UpcomingListPage — view toggle', () => {
     expect(screen.getByRole('button', { name: /calendar/i })).toBeInTheDocument();
   });
 
-  it('navigates to ?view=calendar when Calendar button is clicked', async () => {
+  it('links to ?view=calendar for hydration-safe navigation', () => {
     render(UpcomingListPage, { data: makeData({ meetings: [] }) });
     const calBtn = screen.getByRole('button', { name: /calendar/i });
-    await calBtn.click();
-    expect(goto).toHaveBeenCalledWith('/upcoming?view=calendar');
+    expect(calBtn).toHaveAttribute('href', '/upcoming?view=calendar');
   });
 
-  it('navigates to ?view=list when List button is clicked', async () => {
+  it('links to ?view=list for hydration-safe navigation', () => {
     setViewMode('calendar');
     cleanup();
     render(UpcomingListPage, { data: makeData({ meetings: [] }) });
     const listBtn = screen.getByRole('button', { name: /list/i });
-    await listBtn.click();
-    expect(goto).toHaveBeenCalledWith('/upcoming?view=list');
+    expect(listBtn).toHaveAttribute('href', '/upcoming?view=list');
   });
 });
 
