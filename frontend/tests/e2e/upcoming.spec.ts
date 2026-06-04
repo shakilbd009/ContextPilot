@@ -133,7 +133,7 @@ test('AC-06: Dashboard card → list view → calendar view → detail view', as
   await expect(page.getByText(meetingTitle).first()).toBeVisible();
   await expect(page.getByLabel(/upcoming meetings list/i)).toBeVisible();
   await page.getByRole('button', { name: /calendar/i }).click();
-  await page.waitForURL(/\?view=calendar/);
+  await expect(page).toHaveURL(/\?view=calendar/);
   await expect(page.getByLabel(/upcoming meetings calendar/i)).toBeVisible();
   await page.getByRole('link', { name: /Nav Test Meeting/i }).first().click();
   await expect(page.getByRole('heading', { name: meetingTitle })).toBeVisible();
