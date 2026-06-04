@@ -67,11 +67,18 @@ describe('requestOrigin', () => {
 });
 
 describe('isAllowedOrigin', () => {
-	const allowed = ['http://localhost:5173', 'http://localhost:8080'];
+	const allowed = [
+		'http://localhost:5173',
+		'http://localhost:5174',
+		'http://localhost:8080',
+		'https://app.contextpilot.com',
+	];
 
 	it('matches exact origins', () => {
 		expect(isAllowedOrigin('http://localhost:5173', allowed)).toBe(true);
+		expect(isAllowedOrigin('http://localhost:5174', allowed)).toBe(true);
 		expect(isAllowedOrigin('http://localhost:8080', allowed)).toBe(true);
+		expect(isAllowedOrigin('https://app.contextpilot.com', allowed)).toBe(true);
 	});
 
 	it('rejects substring/path/scheme confusion', () => {
@@ -99,13 +106,25 @@ describe('getAllowedOrigins', () => {
 		]);
 	});
 
-	it('falls back to local-dev defaults when env is undefined or empty', () => {
+	it('falls back to local-dev and CI defaults when env is undefined or empty', () => {
 		expect(getAllowedOrigins(undefined)).toEqual([
 			'http://localhost:5173',
+			'http://localhost:5174',
 			'http://localhost:8080',
+			'https://app.contextpilot.com',
 		]);
-		expect(getAllowedOrigins('')).toEqual(['http://localhost:5173', 'http://localhost:8080']);
-		expect(getAllowedOrigins('   ')).toEqual(['http://localhost:5173', 'http://localhost:8080']);
+		expect(getAllowedOrigins('')).toEqual([
+			'http://localhost:5173',
+			'http://localhost:5174',
+			'http://localhost:8080',
+			'https://app.contextpilot.com',
+		]);
+		expect(getAllowedOrigins('   ')).toEqual([
+			'http://localhost:5173',
+			'http://localhost:5174',
+			'http://localhost:8080',
+			'https://app.contextpilot.com',
+		]);
 	});
 });
 

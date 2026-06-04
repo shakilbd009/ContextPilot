@@ -69,7 +69,7 @@ export const POST: RequestHandler = async ({ request }) => {
   // transport-level security we already control (Content-Length is
   // recomputed by the runtime; Content-Encoding is for the
   // server-to-server hop and must not leak to the browser).
-  const skip = new Set(['content-length', 'content-encoding', 'transfer-encoding']);
+  const skip = new Set(['content-length', 'content-encoding', 'transfer-encoding', 'set-cookie']);
   for (const [k, v] of res.headers.entries()) {
     if (skip.has(k.toLowerCase())) continue;
     out.headers.set(k, v);

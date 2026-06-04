@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
@@ -57,17 +58,17 @@ type loginResponse struct {
 // Handler returns an http.Handler with /login, /signup, and /logout
 // routes registered.
 func Handler(log *zerolog.Logger) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+	r := chi.NewRouter()
+	r.Post("/login", func(w http.ResponseWriter, r *http.Request) {
 		handleLogin(w, r, log)
 	})
-	mux.HandleFunc("/signup", func(w http.ResponseWriter, r *http.Request) {
+	r.Post("/signup", func(w http.ResponseWriter, r *http.Request) {
 		handleSignup(w, r, log)
 	})
-	mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
+	r.Post("/logout", func(w http.ResponseWriter, r *http.Request) {
 		handleLogout(w, r, log)
 	})
-	return mux
+	return r
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request, log *zerolog.Logger) {

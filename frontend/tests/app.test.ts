@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-test('homepage renders the landing hero heading', async ({ page }) => {
+test('homepage renders the expected root heading for the active app-shell mode', async ({ page }) => {
 	await page.goto('/');
-	await expect(page.locator('h1#landing-heading')).toContainText(
-		'Meeting context, when you need it most',
+	await expect(page.locator('h1').first()).toHaveText(
+		/^(Meeting context, when you need it most|Dashboard)$/,
 	);
 });

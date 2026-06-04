@@ -30,12 +30,18 @@ export const CSRF_HEADER_NAME = 'x-csrf-token';
 
 /**
  * Returns the set of allowed origins, parsed from CSRF_ALLOWED_ORIGINS
- * (comma-separated env var). Falls back to the local-dev default of
- * {http://localhost:5173, http://localhost:8080} when unset. Empty
- * entries and whitespace are skipped.
+ * (comma-separated env var). Falls back to the local-dev/CI defaults of
+ * {http://localhost:5173, http://localhost:5174, http://localhost:8080,
+ * https://app.contextpilot.com} when unset. Empty entries and whitespace
+ * are skipped.
  */
 export function getAllowedOrigins(envValue: string | undefined): string[] {
-	const fallback = ['http://localhost:5173', 'http://localhost:8080'];
+	const fallback = [
+		'http://localhost:5173',
+		'http://localhost:5174',
+		'http://localhost:8080',
+		'https://app.contextpilot.com',
+	];
 	const raw = envValue && envValue.trim() !== '' ? envValue : fallback.join(',');
 	const out: string[] = [];
 	for (const part of raw.split(',')) {

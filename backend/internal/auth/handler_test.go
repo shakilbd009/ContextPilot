@@ -1,18 +1,18 @@
 // Tests for the auth handler. These cover the security properties
 // fixed in F4 from t_793ea842:
 //
-//   1. The Set-Cookie header for session_id carries HttpOnly, Secure,
-//      and SameSite=Strict.
-//   2. The X-User-ID is derived server-side from the session token,
-//      NOT from the email. Two different logins with the same email
-//      receive two different X-User-IDs.
-//   3. The response never embeds the session token in the JSON body
-//      (otherwise the JS layer would see it).
-//   4. Logout clears both cookies.
-//   5. The handler refuses to issue a session when the feature flag
-//      is disabled.
-//   6. Method validation: GET on /login → 405.
-//   7. Body validation: empty email or password → 400.
+//  1. The Set-Cookie header for session_id carries HttpOnly, Secure,
+//     and SameSite=Strict.
+//  2. The X-User-ID is derived server-side from the session token,
+//     NOT from the email. Two different logins with the same email
+//     receive two different X-User-IDs.
+//  3. The response never embeds the session token in the JSON body
+//     (otherwise the JS layer would see it).
+//  4. Logout clears both cookies.
+//  5. The handler refuses to issue a session when the feature flag
+//     is disabled.
+//  6. Method validation: GET on /login → 405.
+//  7. Body validation: empty email or password → 400.
 package auth
 
 import (
@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
 )
 
@@ -264,6 +265,27 @@ func TestLoginRejectsNonPOST(t *testing.T) {
 	}
 	if got := rec.Header().Get("Allow"); got != "POST" {
 		t.Errorf("Allow header = %q, want POST", got)
+	}
+}
+
+func TestHandlerWorksWhenMountedUnderAPIPrefix(t *testing.T) {
+	t.Setenv(FeatureFlagEnv, "true")
+
+	root := chi.NewRouter()
+	root.Mount("/api/v1/auth", Handler(defaultTestLogger()))
+
+	body := strings.NewReader(`{"email":"test@example.com","password":"password"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	root.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mounted login status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if len(rec.Result().Cookies()) == 0 {
+		t.Fatal("mounted login did not issue session cookies")
 	}
 }
 

@@ -44,7 +44,7 @@ export const POST: RequestHandler = async ({ request }) => {
     statusText: res.statusText,
   });
 
-  const skip = new Set(['content-length', 'content-encoding', 'transfer-encoding']);
+  const skip = new Set(['content-length', 'content-encoding', 'transfer-encoding', 'set-cookie']);
   for (const [k, v] of res.headers.entries()) {
     if (skip.has(k.toLowerCase())) continue;
     out.headers.set(k, v);
